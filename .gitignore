@@ -29,6 +29,8 @@ build
 dist
 *.tsbuildinfo
 .svelte-kit/
+tsup.config.bundled_*.mjs
+next-env.d.ts
 
 
 # Debug

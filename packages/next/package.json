@@ -48,7 +48,7 @@
     "dist"
   ],
   "scripts": {
-    "build": "tsup",
+    "build": "rm -rf dist && tsup",
     "dev": "tsup --watch",
     "check-types": "tsc --noEmit",
     "typecheck": "tsc --noEmit"
