@@ -23,13 +23,12 @@
     "test:coverage": "vitest run --coverage",
     "test:e2e": "pnpm --filter e2e-tests test",
     "prepare": "husky",
-    "changeset": "changeset",
-    "ci:version": "changeset version && pnpm install --no-frozen-lockfile",
-    "ci:publish": "pnpm run build && changeset publish",
+    "version:sync": "node scripts/sync-version.js",
+    "version:check": "node scripts/check-version-sync.js",
+    "ci:publish": "pnpm run build && pnpm -r publish --no-git-checks --filter '@json-render/*'",
     "generate:og": "npx tsx scripts/generate-og-images.mts"
   },
   "devDependencies": {
-    "@changesets/cli": "2.29.8",
     "@resvg/resvg-js": "2.6.2",
     "@solidjs/testing-library": "^0.8.10",
     "@sveltejs/vite-plugin-svelte": "^6.2.4",

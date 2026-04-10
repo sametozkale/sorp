@@ -73,25 +73,20 @@ Do **not** add `--port` flags -- portless handles port assignment automatically.
   - Skills in `skills/*/SKILL.md` (if the package has a corresponding skill)
   - `AGENTS.md` (if workflow or conventions change)
 
-## Releases
+## Releasing
 
-This monorepo uses [Changesets](https://github.com/changesets/changesets) for versioning and publishing.
+Releases are manual, single-PR affairs. The maintainer controls the changelog voice and format.
 
-### Fixed version group
-
-All public `@json-render/*` packages are in a **fixed** group (see `.changeset/config.json`). A changeset that bumps any one of them bumps all of them to the same version. You only need to list the packages that actually changed in the changeset front matter — the fixed group handles the rest.
+All public `@json-render/*` packages share the same version. The canonical version lives in `packages/core/package.json`.
 
 ### Preparing a release
 
-When asked to prepare a release (e.g. "prepare v0.12.0"):
+When asked to prepare a release (e.g. "prepare v0.17.0"):
 
-1. **Create a changeset file** at `.changeset/v0-<N>-release.md` following the existing pattern:
-   - YAML front matter listing changed packages with bump type (`minor` for feature releases, `patch` for bug-fix-only releases)
-   - A one-line summary, then `### New:` / `### Improved:` / `### Fixed:` sections describing each change
-   - Always list `@json-render/core` plus any packages with actual code changes
-2. **Do NOT bump versions** in `package.json` files — CI runs `pnpm ci:version` (which calls `changeset version`) to do that automatically
-3. **Do NOT manually write `CHANGELOG.md`** entries — `changeset version` generates them from the changeset file
-4. **Add new packages to the fixed group** in `.changeset/config.json` if they should be versioned together with the rest
+1. Create a branch (e.g. `prepare-v0.17.0`)
+2. Bump the version in `packages/core/package.json`
+3. Run `pnpm run version:sync` to update all other `@json-render/*` packages
+4. Write the changelog entry in `CHANGELOG.md`, wrapped in `<!-- release:start -->` and `<!-- release:end -->` markers (move the markers from the previous entry to the new one)
 5. **Fill documentation gaps** — every public package should have:
    - A row in the root `README.md` packages table
    - A renderer section in the root `README.md` (if it's a renderer)
@@ -101,12 +96,15 @@ When asked to prepare a release (e.g. "prepare v0.12.0"):
    - A skill at `skills/<name>/SKILL.md`
    - A `packages/<name>/README.md`
 6. **Run `pnpm type-check`** after all changes to verify nothing is broken
+7. Open a PR and merge to `main`
 
-### CI scripts
+CI compares the `@json-render/core` version to what's on npm. If it differs, it builds, publishes all public packages, and creates the GitHub release automatically. The release body is extracted from the content between the markers.
 
-- `pnpm changeset` — interactively create a new changeset
-- `pnpm ci:version` — run `changeset version` + lockfile update (CI only)
-- `pnpm ci:publish` — build all packages and publish to npm (CI only)
+### Scripts
+
+- `pnpm run version:sync` — sync all `@json-render/*` package versions to match `@json-render/core`
+- `pnpm run version:check` — verify all versions are in sync (runs in CI)
+- `pnpm run ci:publish` — build all packages and publish to npm (CI only)
 
 <!-- opensrc:start -->
 
