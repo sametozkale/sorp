@@ -165,7 +165,8 @@ export const playgroundCatalog = defineCatalog(schema, {
           .enum(["body", "caption", "muted", "lead", "code"])
           .nullable(),
       }),
-      description: "Paragraph text",
+      description:
+        'Paragraph text. In repeat scopes, use { "$template": "${field1} ${field2}" } to interpolate item fields.',
       example: { text: "Hello, world!" },
     },
 
@@ -176,6 +177,18 @@ export const playgroundCatalog = defineCatalog(schema, {
         height: z.number().nullable(),
       }),
       description: "Placeholder image (displays alt text in a styled box)",
+    },
+
+    Icon: {
+      props: z.object({
+        name: z.string(),
+        size: z.enum(["sm", "md", "lg"]).nullable(),
+        color: z
+          .enum(["default", "muted", "primary", "success", "warning", "danger"])
+          .nullable(),
+      }),
+      description:
+        "Lucide icon by name. PascalCase: MapPin, Mail, Globe, Calendar, Star, Heart, Check, X, ArrowRight, Phone, Building, Clock, Shield, Zap, Users, Eye, Download, Upload, Search, Filter, Settings, Bell, ChevronRight, ExternalLink, Info, AlertTriangle, CheckCircle, XCircle. Use in horizontal Stacks with Text for icon+label patterns. Never use emoji — always use Icon.",
     },
 
     Avatar: {
@@ -259,8 +272,32 @@ export const playgroundCatalog = defineCatalog(schema, {
         value: z.number(),
         max: z.number().nullable(),
         label: z.string().nullable(),
+        interactive: z.boolean().nullable(),
       }),
-      description: "Star rating display",
+      events: ["change"],
+      description:
+        "Interactive star rating. Use { $bindState } on value for binding. Set interactive: false for read-only display.",
+      example: { value: 4, max: 5, label: "Rating" },
+    },
+
+    Metric: {
+      props: z.object({
+        label: z.string(),
+        value: z.string(),
+        change: z.string().nullable(),
+        changeType: z.enum(["positive", "negative", "neutral"]).nullable(),
+        prefix: z.string().nullable(),
+        suffix: z.string().nullable(),
+      }),
+      description:
+        "Key metric / stat display. Shows a large value with label and optional change indicator. Use for dashboard KPIs.",
+      example: {
+        label: "Total Revenue",
+        value: "125,000",
+        prefix: "$",
+        change: "+12.5%",
+        changeType: "positive",
+      },
     },
 
     // ── Charts ──────────────────────────────────────────────────────────
@@ -411,11 +448,14 @@ export const playgroundCatalog = defineCatalog(schema, {
     Button: {
       props: z.object({
         label: z.string(),
-        variant: z.enum(["primary", "secondary", "danger"]).nullable(),
+        variant: z
+          .enum(["primary", "secondary", "outline", "danger"])
+          .nullable(),
         disabled: z.boolean().nullable(),
       }),
       events: ["press"],
-      description: "Clickable button. Bind on.press for handler.",
+      description:
+        "Clickable button. primary = solid fill, outline = bordered/transparent, secondary = muted fill. Bind on.press for handler.",
       example: { label: "Submit", variant: "primary" },
     },
 

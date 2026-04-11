@@ -105,6 +105,7 @@ import {
   TooltipProvider,
   TooltipTrigger,
 } from "@/components/ui/tooltip";
+import { icons as lucideIcons } from "lucide-react";
 
 // =============================================================================
 // Registry — components + actions, types inferred from catalog
@@ -127,23 +128,25 @@ export const { registry, executeAction } = defineRegistry(playgroundCatalog, {
 
       return (
         <div
-          className={`border border-border rounded-lg p-4 bg-card text-card-foreground overflow-hidden ${maxWidthClass} ${centeredClass}`}
+          className={`border border-border rounded-xl p-5 bg-card text-card-foreground shadow-sm overflow-hidden h-full flex flex-col ${maxWidthClass} ${centeredClass}`}
         >
           {(props.title || props.description) && (
             <div className="mb-4">
               {props.title && (
-                <h3 className="font-semibold text-lg text-left">
+                <h3 className="font-semibold text-lg tracking-tight">
                   {props.title}
                 </h3>
               )}
               {props.description && (
-                <p className="text-sm text-muted-foreground mt-1 text-left">
+                <p className="text-sm text-muted-foreground mt-1">
                   {props.description}
                 </p>
               )}
             </div>
           )}
-          <div className="space-y-3">{children}</div>
+          <div className="flex-1 flex flex-col gap-4 [&>:last-child]:mt-auto">
+            {children}
+          </div>
         </div>
       );
     },
@@ -160,14 +163,31 @@ export const { registry, executeAction } = defineRegistry(playgroundCatalog, {
               : props.gap === "none"
                 ? "gap-0"
                 : "gap-3";
-      const alignClass =
-        props.align === "center"
-          ? "items-center"
-          : props.align === "end"
-            ? "items-end"
-            : props.align === "stretch"
-              ? "items-stretch"
-              : "items-start";
+
+      let alignClass: string;
+      if (isHorizontal) {
+        alignClass =
+          props.align === "center"
+            ? "items-center"
+            : props.align === "end"
+              ? "items-end"
+              : props.align === "stretch"
+                ? "items-stretch"
+                : "items-start";
+      } else {
+        // Vertical: items-center/end lets inline elements (Avatar, Badge, Button)
+        // center/align naturally. Block containers (Grid, Accordion, Table) add
+        // their own w-full to stretch regardless.
+        alignClass =
+          props.align === "center"
+            ? "items-center"
+            : props.align === "end"
+              ? "items-end"
+              : props.align === "start"
+                ? "items-start"
+                : "items-stretch";
+      }
+
       const justifyClass =
         props.justify === "center"
           ? "justify-center"
@@ -181,7 +201,7 @@ export const { registry, executeAction } = defineRegistry(playgroundCatalog, {
 
       return (
         <div
-          className={`flex ${isHorizontal ? "flex-row flex-wrap" : "flex-col"} ${gapClass} ${alignClass} ${justifyClass}`}
+          className={`flex ${isHorizontal ? "flex-row flex-wrap" : "flex-col w-full"} ${gapClass} ${alignClass} ${justifyClass}`}
         >
           {children}
         </div>
@@ -189,7 +209,12 @@ export const { registry, executeAction } = defineRegistry(playgroundCatalog, {
     },
 
     Grid: ({ props, children }) => {
-      const n = props.columns ?? 1;
+      const childCount = Array.isArray(children)
+        ? children.length
+        : children
+          ? 1
+          : 0;
+      const n = Math.min(props.columns ?? 1, childCount || 1);
       const cols =
         n >= 6
           ? "grid-cols-6"
@@ -205,13 +230,15 @@ export const { registry, executeAction } = defineRegistry(playgroundCatalog, {
       const gridGap =
         props.gap === "lg" ? "gap-4" : props.gap === "sm" ? "gap-2" : "gap-3";
 
-      return <div className={`grid ${cols} ${gridGap}`}>{children}</div>;
+      return <div className={`grid w-full ${cols} ${gridGap}`}>{children}</div>;
     },
 
     Separator: ({ props }) => (
       <Separator
         orientation={props.orientation ?? "horizontal"}
-        className={props.orientation === "vertical" ? "h-full mx-2" : "my-3"}
+        className={
+          props.orientation === "vertical" ? "h-full mx-3" : "my-4 opacity-50"
+        }
       />
     ),
 
@@ -383,7 +410,7 @@ export const { registry, executeAction } = defineRegistry(playgroundCatalog, {
       });
 
       return (
-        <div className="rounded-md border border-border overflow-hidden">
+        <div className="w-full rounded-md border border-border overflow-hidden">
           <TablePrimitive>
             {props.caption && <TableCaption>{props.caption}</TableCaption>}
             <TableHeader>
@@ -411,20 +438,17 @@ export const { registry, executeAction } = defineRegistry(playgroundCatalog, {
       const level = props.level ?? "h2";
       const headingClass =
         level === "h1"
-          ? "text-2xl font-bold"
+          ? "text-2xl font-bold tracking-tight"
           : level === "h3"
-            ? "text-base font-semibold"
+            ? "text-base font-semibold tracking-tight"
             : level === "h4"
-              ? "text-sm font-semibold"
-              : "text-lg font-semibold";
+              ? "text-sm font-medium uppercase tracking-wider text-muted-foreground"
+              : "text-xl font-semibold tracking-tight";
 
-      if (level === "h1")
-        return <h1 className={`${headingClass} text-left`}>{props.text}</h1>;
-      if (level === "h3")
-        return <h3 className={`${headingClass} text-left`}>{props.text}</h3>;
-      if (level === "h4")
-        return <h4 className={`${headingClass} text-left`}>{props.text}</h4>;
-      return <h2 className={`${headingClass} text-left`}>{props.text}</h2>;
+      if (level === "h1") return <h1 className={headingClass}>{props.text}</h1>;
+      if (level === "h3") return <h3 className={headingClass}>{props.text}</h3>;
+      if (level === "h4") return <h4 className={headingClass}>{props.text}</h4>;
+      return <h2 className={headingClass}>{props.text}</h2>;
     },
 
     Text: ({ props }) => {
@@ -440,19 +464,58 @@ export const { registry, executeAction } = defineRegistry(playgroundCatalog, {
                 : "text-sm";
 
       if (props.variant === "code") {
-        return <code className={`${textClass} text-left`}>{props.text}</code>;
+        return <code className={textClass}>{props.text}</code>;
       }
-      return <p className={`${textClass} text-left`}>{props.text}</p>;
+      return <p className={textClass}>{props.text}</p>;
     },
 
     Image: ({ props }) => (
       <div
-        className="bg-muted border border-border rounded flex items-center justify-center text-xs text-muted-foreground aspect-video"
-        style={{ width: props.width ?? 80, height: props.height ?? 60 }}
+        className="w-full bg-muted/50 border border-dashed border-border rounded-lg flex flex-col items-center justify-center gap-2 text-muted-foreground/60 px-4"
+        style={{
+          maxWidth: props.width ?? undefined,
+          height: props.height ?? 120,
+          minHeight: 80,
+        }}
       >
-        {props.alt || "img"}
+        <svg
+          width="32"
+          height="32"
+          viewBox="0 0 24 24"
+          fill="none"
+          stroke="currentColor"
+          strokeWidth="1.5"
+          strokeLinecap="round"
+          strokeLinejoin="round"
+          className="opacity-50"
+        >
+          <rect width="18" height="18" x="3" y="3" rx="2" ry="2" />
+          <circle cx="9" cy="9" r="2" />
+          <path d="m21 15-3.086-3.086a2 2 0 0 0-2.828 0L6 21" />
+        </svg>
+        {props.alt && <span className="text-xs">{props.alt}</span>}
       </div>
     ),
+
+    Icon: ({ props }) => {
+      const IconComponent = lucideIcons[props.name as keyof typeof lucideIcons];
+      if (!IconComponent) return null;
+      const sizeMap = { sm: 16, md: 20, lg: 24 } as const;
+      const px = sizeMap[props.size ?? "md"] ?? 20;
+      const colorClass =
+        props.color === "muted"
+          ? "text-muted-foreground"
+          : props.color === "primary"
+            ? "text-primary"
+            : props.color === "success"
+              ? "text-green-600 dark:text-green-400"
+              : props.color === "warning"
+                ? "text-yellow-600 dark:text-yellow-400"
+                : props.color === "danger"
+                  ? "text-red-600 dark:text-red-400"
+                  : "";
+      return <IconComponent size={px} className={`shrink-0 ${colorClass}`} />;
+    },
 
     Avatar: ({ props }) => {
       const name = props.name || "?";
@@ -462,16 +525,16 @@ export const { registry, executeAction } = defineRegistry(playgroundCatalog, {
         .join("")
         .slice(0, 2)
         .toUpperCase();
-      const avatarSize =
+      const sizeStyles =
         props.size === "lg"
-          ? "w-12 h-12 text-base"
+          ? { outer: "w-[72px] h-[72px]", text: "text-xl", ring: "ring-[3px]" }
           : props.size === "sm"
-            ? "w-8 h-8 text-xs"
-            : "w-10 h-10 text-sm";
+            ? { outer: "w-8 h-8", text: "text-xs", ring: "ring-2" }
+            : { outer: "w-10 h-10", text: "text-sm", ring: "ring-2" };
 
       return (
         <div
-          className={`${avatarSize} rounded-full bg-muted flex items-center justify-center font-medium`}
+          className={`${sizeStyles.outer} ${sizeStyles.text} rounded-full bg-gradient-to-br from-muted-foreground/20 to-muted flex items-center justify-center font-semibold tracking-wide ${sizeStyles.ring} ring-background shadow-sm`}
         >
           {initials}
         </div>
@@ -491,9 +554,20 @@ export const { registry, executeAction } = defineRegistry(playgroundCatalog, {
           : props.variant === "warning"
             ? "bg-yellow-100 text-yellow-800 dark:bg-yellow-900 dark:text-yellow-100"
             : "";
+      const dotColor =
+        props.variant === "success"
+          ? "bg-green-500"
+          : props.variant === "warning"
+            ? "bg-yellow-500"
+            : props.variant === "danger"
+              ? "bg-red-500"
+              : "";
 
       return (
-        <Badge variant={variant} className={customClass}>
+        <Badge variant={variant} className={`${customClass} gap-1.5`}>
+          {dotColor && (
+            <span className={`w-1.5 h-1.5 rounded-full ${dotColor} shrink-0`} />
+          )}
           {props.text}
         </Badge>
       );
@@ -510,8 +584,47 @@ export const { registry, executeAction } = defineRegistry(playgroundCatalog, {
               ? "border-blue-200 bg-blue-50 text-blue-900 dark:border-blue-800 dark:bg-blue-950 dark:text-blue-100"
               : "";
 
+      const iconProps = {
+        width: 16,
+        height: 16,
+        viewBox: "0 0 24 24",
+        fill: "none",
+        stroke: "currentColor",
+        strokeWidth: 2,
+        strokeLinecap: "round" as const,
+        strokeLinejoin: "round" as const,
+        className: "shrink-0",
+      };
+
+      const icon =
+        props.type === "success" ? (
+          <svg {...iconProps}>
+            <path d="M22 11.08V12a10 10 0 1 1-5.93-9.14" />
+            <polyline points="22 4 12 14.01 9 11.01" />
+          </svg>
+        ) : props.type === "warning" ? (
+          <svg {...iconProps}>
+            <path d="m21.73 18-8-14a2 2 0 0 0-3.48 0l-8 14A2 2 0 0 0 4 21h16a2 2 0 0 0 1.73-3Z" />
+            <line x1="12" y1="9" x2="12" y2="13" />
+            <line x1="12" y1="17" x2="12.01" y2="17" />
+          </svg>
+        ) : props.type === "error" ? (
+          <svg {...iconProps}>
+            <circle cx="12" cy="12" r="10" />
+            <line x1="15" y1="9" x2="9" y2="15" />
+            <line x1="9" y1="9" x2="15" y2="15" />
+          </svg>
+        ) : (
+          <svg {...iconProps}>
+            <circle cx="12" cy="12" r="10" />
+            <line x1="12" y1="16" x2="12" y2="12" />
+            <line x1="12" y1="8" x2="12.01" y2="8" />
+          </svg>
+        );
+
       return (
         <Alert variant={variant} className={customClass}>
+          {icon}
           <AlertTitle>{props.title}</AlertTitle>
           {props.message && (
             <AlertDescription>{props.message}</AlertDescription>
@@ -523,7 +636,7 @@ export const { registry, executeAction } = defineRegistry(playgroundCatalog, {
     Progress: ({ props }) => {
       const value = Math.min(100, Math.max(0, props.value || 0));
       return (
-        <div className="space-y-2">
+        <div className="w-full space-y-2">
           {props.label && (
             <Label className="text-sm text-muted-foreground">
               {props.label}
@@ -607,9 +720,19 @@ export const { registry, executeAction } = defineRegistry(playgroundCatalog, {
       </PopoverPrimitive>
     ),
 
-    Rating: ({ props }) => {
-      const ratingValue = props.value || 0;
+    Rating: ({ props, bindings, emit }) => {
+      const [boundValue, setBoundValue] = useBoundProp<number>(
+        props.value as number | undefined,
+        bindings?.value,
+      );
+      const [localValue, setLocalValue] = useState(props.value || 0);
+      const isBound = !!bindings?.value;
+      const ratingValue = isBound ? (boundValue ?? 0) : localValue;
+      const setValue = isBound ? setBoundValue : setLocalValue;
       const maxRating = props.max ?? 5;
+      const interactive = props.interactive !== false;
+      const [hoverIndex, setHoverIndex] = useState(-1);
+
       return (
         <div className="space-y-2">
           {props.label && (
@@ -617,15 +740,78 @@ export const { registry, executeAction } = defineRegistry(playgroundCatalog, {
               {props.label}
             </Label>
           )}
-          <div className="flex gap-1">
-            {Array.from({ length: maxRating }).map((_, i) => (
-              <span
-                key={i}
-                className={`text-lg ${i < ratingValue ? "text-yellow-400" : "text-muted"}`}
-              >
-                *
+          <div
+            className="flex gap-0.5"
+            onMouseLeave={() => interactive && setHoverIndex(-1)}
+          >
+            {Array.from({ length: maxRating }).map((_, i) => {
+              const filled =
+                hoverIndex >= 0 ? i <= hoverIndex : i < ratingValue;
+              return (
+                <button
+                  key={i}
+                  type="button"
+                  className={`p-0.5 transition-colors ${interactive ? "cursor-pointer hover:scale-110" : "cursor-default"}`}
+                  onMouseEnter={() => interactive && setHoverIndex(i)}
+                  onClick={() => {
+                    if (!interactive) return;
+                    const newVal = i + 1 === ratingValue ? 0 : i + 1;
+                    setValue(newVal);
+                    emit("change");
+                  }}
+                >
+                  <svg
+                    width="20"
+                    height="20"
+                    viewBox="0 0 24 24"
+                    fill={filled ? "currentColor" : "none"}
+                    stroke="currentColor"
+                    strokeWidth="1.5"
+                    strokeLinecap="round"
+                    strokeLinejoin="round"
+                    className={
+                      filled ? "text-yellow-400" : "text-muted-foreground/40"
+                    }
+                  >
+                    <polygon points="12 2 15.09 8.26 22 9.27 17 14.14 18.18 21.02 12 17.77 5.82 21.02 7 14.14 2 9.27 8.91 8.26 12 2" />
+                  </svg>
+                </button>
+              );
+            })}
+          </div>
+        </div>
+      );
+    },
+
+    Metric: ({ props }) => {
+      const changeColor =
+        props.changeType === "positive"
+          ? "text-green-600 dark:text-green-400"
+          : props.changeType === "negative"
+            ? "text-red-600 dark:text-red-400"
+            : "text-muted-foreground";
+      const changeIcon =
+        props.changeType === "positive"
+          ? "\u2191"
+          : props.changeType === "negative"
+            ? "\u2193"
+            : "";
+
+      return (
+        <div className="space-y-1">
+          <div className="text-sm text-muted-foreground">{props.label}</div>
+          <div className="flex items-baseline gap-1.5">
+            <span className="text-2xl font-semibold tracking-tight tabular-nums">
+              {props.prefix}
+              {props.value}
+              {props.suffix}
+            </span>
+            {props.change && (
+              <span className={`text-sm font-medium ${changeColor}`}>
+                {changeIcon}
+                {props.change}
               </span>
-            ))}
+            )}
           </div>
         </div>
       );
@@ -636,26 +822,39 @@ export const { registry, executeAction } = defineRegistry(playgroundCatalog, {
     BarGraph: ({ props }) => {
       const data = props.data || [];
       const maxValue = Math.max(...data.map((d) => d.value), 1);
+      const barColors = [
+        "bg-primary",
+        "bg-primary/80",
+        "bg-primary/60",
+        "bg-primary/70",
+        "bg-primary/90",
+        "bg-primary/50",
+      ];
 
       return (
-        <div className="space-y-2">
+        <div className="space-y-3">
           {props.title && (
-            <div className="text-sm font-medium text-left">{props.title}</div>
+            <div className="text-sm font-medium">{props.title}</div>
           )}
-          <div className="flex gap-2">
+          <div className="flex items-end gap-2" style={{ height: 160 }}>
             {data.map((d, i) => (
-              <div key={i} className="flex-1 flex flex-col items-center gap-1">
-                <div className="text-xs text-muted-foreground">{d.value}</div>
-                <div className="w-full h-24 flex items-end">
+              <div
+                key={i}
+                className="flex-1 flex flex-col items-center gap-1.5 h-full justify-end group"
+              >
+                <div className="text-[11px] font-medium text-muted-foreground tabular-nums">
+                  {d.value}
+                </div>
+                <div className="w-full flex-1 flex items-end">
                   <div
-                    className="w-full bg-primary rounded-t transition-all"
+                    className={`w-full ${barColors[i % barColors.length]} rounded-t-md transition-all group-hover:opacity-80`}
                     style={{
                       height: `${(d.value / maxValue) * 100}%`,
-                      minHeight: 2,
+                      minHeight: 4,
                     }}
                   />
                 </div>
-                <div className="text-xs text-muted-foreground truncate w-full text-center">
+                <div className="text-[11px] text-muted-foreground truncate w-full text-center">
                   {d.label}
                 </div>
               </div>
@@ -672,8 +871,8 @@ export const { registry, executeAction } = defineRegistry(playgroundCatalog, {
       const range = maxValue - minValue || 1;
 
       const width = 300;
-      const height = 100;
-      const padding = { top: 10, right: 10, bottom: 10, left: 10 };
+      const height = 140;
+      const padding = { top: 12, right: 12, bottom: 12, left: 12 };
       const chartWidth = width - padding.left - padding.right;
       const chartHeight = height - padding.top - padding.bottom;
 
@@ -690,77 +889,107 @@ export const { registry, executeAction } = defineRegistry(playgroundCatalog, {
         return { x, y, ...d };
       });
 
-      const pathD =
-        points.length > 0
-          ? `M ${points.map((p) => `${p.x} ${p.y}`).join(" L ")}`
-          : "";
+      // Build smooth cubic bezier curve through points
+      let smoothPath = "";
+      let areaPath = "";
+      if (points.length > 1) {
+        const first = points[0]!;
+        const last = points[points.length - 1]!;
+        smoothPath = `M ${first.x} ${first.y}`;
+        for (let i = 0; i < points.length - 1; i++) {
+          const curr = points[i]!;
+          const next = points[i + 1]!;
+          const cpx = (curr.x + next.x) / 2;
+          smoothPath += ` C ${cpx} ${curr.y}, ${cpx} ${next.y}, ${next.x} ${next.y}`;
+        }
+        const bottomY = height - padding.bottom;
+        areaPath = `${smoothPath} L ${last.x} ${bottomY} L ${first.x} ${bottomY} Z`;
+      } else if (points.length === 1) {
+        const only = points[0]!;
+        smoothPath = `M ${only.x} ${only.y}`;
+      }
+
+      const gradientId = `line-gradient-${Math.random().toString(36).slice(2, 8)}`;
 
       return (
-        <div className="space-y-2">
+        <div className="space-y-3">
           {props.title && (
-            <div className="text-sm font-medium text-left">{props.title}</div>
+            <div className="text-sm font-medium">{props.title}</div>
           )}
-          <div className="relative h-28">
-            <svg viewBox={`0 0 ${width} ${height}`} className="w-full h-full">
-              <line
-                x1={padding.left}
-                y1={padding.top + chartHeight / 2}
-                x2={width - padding.right}
-                y2={padding.top + chartHeight / 2}
-                stroke="currentColor"
-                strokeOpacity="0.1"
-                strokeWidth="1"
-              />
-              <line
-                x1={padding.left}
-                y1={padding.top}
-                x2={width - padding.right}
-                y2={padding.top}
-                stroke="currentColor"
-                strokeOpacity="0.1"
-                strokeWidth="1"
-              />
-              <line
-                x1={padding.left}
-                y1={height - padding.bottom}
-                x2={width - padding.right}
-                y2={height - padding.bottom}
-                stroke="currentColor"
-                strokeOpacity="0.1"
-                strokeWidth="1"
-              />
-              {pathD && (
+          <div className="relative" style={{ height: 160 }}>
+            <svg
+              viewBox={`0 0 ${width} ${height}`}
+              className="w-full h-full"
+              preserveAspectRatio="none"
+            >
+              <defs>
+                <linearGradient id={gradientId} x1="0" y1="0" x2="0" y2="1">
+                  <stop
+                    offset="0%"
+                    stopColor="currentColor"
+                    stopOpacity="0.15"
+                  />
+                  <stop
+                    offset="100%"
+                    stopColor="currentColor"
+                    stopOpacity="0"
+                  />
+                </linearGradient>
+              </defs>
+              {[0, 0.25, 0.5, 0.75, 1].map((frac) => (
+                <line
+                  key={frac}
+                  x1={padding.left}
+                  y1={padding.top + chartHeight * frac}
+                  x2={width - padding.right}
+                  y2={padding.top + chartHeight * frac}
+                  stroke="currentColor"
+                  strokeOpacity="0.07"
+                  vectorEffect="non-scaling-stroke"
+                  strokeWidth="1"
+                />
+              ))}
+              {areaPath && (
                 <path
-                  d={pathD}
+                  d={areaPath}
+                  fill={`url(#${gradientId})`}
+                  className="text-primary"
+                />
+              )}
+              {smoothPath && (
+                <path
+                  d={smoothPath}
                   fill="none"
                   stroke="currentColor"
                   strokeWidth="2"
                   strokeLinecap="round"
                   strokeLinejoin="round"
+                  vectorEffect="non-scaling-stroke"
                   className="text-primary"
                 />
               )}
-              {points.map((p, i) => (
-                <circle
-                  key={i}
-                  cx={p.x}
-                  cy={p.y}
-                  r="4"
-                  className="fill-primary"
-                />
-              ))}
             </svg>
+            {points.map((p, i) => (
+              <div
+                key={i}
+                className="absolute w-[7px] h-[7px] rounded-full bg-primary -translate-x-1/2 -translate-y-1/2"
+                style={{
+                  left: `${(p.x / width) * 100}%`,
+                  top: `${(p.y / height) * 100}%`,
+                }}
+              />
+            ))}
           </div>
-          {data.length > 0 && (
-            <div className="flex justify-between">
-              {data.map((d, i) => (
-                <div
+          {points.length > 0 && (
+            <div className="relative h-4">
+              {points.map((p, i) => (
+                <span
                   key={i}
-                  className="text-xs text-muted-foreground text-center"
-                  style={{ width: `${100 / data.length}%` }}
+                  className="absolute text-[11px] text-muted-foreground -translate-x-1/2"
+                  style={{ left: `${(p.x / width) * 100}%` }}
                 >
-                  {d.label}
-                </div>
+                  {data[i]?.label}
+                </span>
               ))}
             </div>
           )}
@@ -787,7 +1016,7 @@ export const { registry, executeAction } = defineRegistry(playgroundCatalog, {
       );
 
       return (
-        <div className="space-y-2">
+        <div className="w-full space-y-2">
           {props.label && <Label htmlFor={props.name}>{props.label}</Label>}
           <Input
             id={props.name}
@@ -829,7 +1058,7 @@ export const { registry, executeAction } = defineRegistry(playgroundCatalog, {
       );
 
       return (
-        <div className="space-y-2">
+        <div className="w-full space-y-2">
           {props.label && <Label htmlFor={props.name}>{props.label}</Label>}
           <Textarea
             id={props.name}
@@ -872,7 +1101,7 @@ export const { registry, executeAction } = defineRegistry(playgroundCatalog, {
       );
 
       return (
-        <div className="space-y-2">
+        <div className="w-full space-y-2">
           <Label>{props.label}</Label>
           <Select
             value={value}
@@ -945,7 +1174,7 @@ export const { registry, executeAction } = defineRegistry(playgroundCatalog, {
       const setValue = isBound ? setBoundValue : setLocalValue;
 
       return (
-        <div className="space-y-2">
+        <div className="w-full space-y-2">
           {props.label && <Label>{props.label}</Label>}
           <RadioGroup
             value={value}
@@ -987,7 +1216,7 @@ export const { registry, executeAction } = defineRegistry(playgroundCatalog, {
       const setChecked = isBound ? setBoundChecked : setLocalChecked;
 
       return (
-        <div className="flex items-center justify-between space-x-2">
+        <div className="w-full flex items-center justify-between space-x-2">
           <Label htmlFor={props.name} className="cursor-pointer">
             {props.label}
           </Label>
@@ -1014,7 +1243,7 @@ export const { registry, executeAction } = defineRegistry(playgroundCatalog, {
       const setValue = isBound ? setBoundValue : setLocalValue;
 
       return (
-        <div className="space-y-2">
+        <div className="w-full space-y-2">
           {props.label && (
             <div className="flex justify-between">
               <Label className="text-sm">{props.label}</Label>
@@ -1041,9 +1270,11 @@ export const { registry, executeAction } = defineRegistry(playgroundCatalog, {
       const variant =
         props.variant === "danger"
           ? "destructive"
-          : props.variant === "secondary"
-            ? "secondary"
-            : "default";
+          : props.variant === "outline"
+            ? "outline"
+            : props.variant === "secondary"
+              ? "secondary"
+              : "default";
 
       return (
         <Button

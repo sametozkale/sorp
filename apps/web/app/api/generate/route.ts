@@ -17,10 +17,13 @@ const PLAYGROUND_RULES = [
   "NEVER use viewport height classes (min-h-screen, h-screen) - the UI renders inside a fixed-size container.",
   "NEVER use page background colors (bg-gray-50) - the container has its own background.",
   "For forms or small UIs: use Card as root with maxWidth:'sm' or 'md' and centered:true.",
-  "For content-heavy UIs (blogs, dashboards, product listings): use Stack or Grid as root. Use Grid with 2-3 columns for card layouts.",
+  "For content-heavy UIs (blogs, dashboards, product listings): use Stack or Grid as root. Use Grid with 2-3 columns for card layouts. Keep the total UI compact — avoid sprawling multi-section pages. Prefer a single focused Card over a full page layout.",
   "Wrap each repeated item in a Card for visual separation and structure.",
   "Use realistic, professional sample data. Include 3-5 items with varied content. Never leave state arrays empty.",
   'For form inputs (Input, Textarea, Select), always include checks for validation (e.g. required, email, minLength). Always pair checks with a $bindState expression on the value prop (e.g. { "$bindState": "/path" }).',
+  "NEVER use emoji characters. Use the Icon component with Lucide icon names instead. For example, use Icon with name:'MapPin' instead of a pin emoji, Icon with name:'Mail' instead of an envelope emoji, etc.",
+  "For icon+label patterns, use a horizontal Stack with gap:'sm' and align:'center' containing an Icon and a Text.",
+  "For any tabular or list data with consistent columns (items, orders, stats), ALWAYS use the Table component. Never simulate tables with Stacks — the columns won't align.",
 ];
 
 const MAX_PROMPT_LENGTH = 500;

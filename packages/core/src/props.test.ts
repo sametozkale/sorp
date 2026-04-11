@@ -5,7 +5,6 @@ import {
   resolveBindings,
   resolveActionParam,
   _resetWarnedComputedFns,
-  _resetWarnedTemplatePaths,
 } from "./props";
 import type { PropResolutionContext } from "./props";
 
@@ -635,30 +634,32 @@ describe("$template expressions", () => {
     );
   });
 
-  it("warns when path does not start with /", () => {
-    _resetWarnedTemplatePaths();
-    const warnSpy = vi.spyOn(console, "warn").mockImplementation(() => {});
+  it("resolves bare names against state model when not in repeat", () => {
     const ctx: PropResolutionContext = { stateModel: { name: "Bob" } };
     const result = resolvePropValue({ $template: "Hi ${name}!" }, ctx);
     expect(result).toBe("Hi Bob!");
-    expect(warnSpy).toHaveBeenCalledWith(
-      expect.stringContaining('$template path "name"'),
-    );
-    warnSpy.mockRestore();
-    _resetWarnedTemplatePaths();
   });
 
-  it("deduplicates warnings for the same $template path", () => {
-    _resetWarnedTemplatePaths();
-    const warnSpy = vi.spyOn(console, "warn").mockImplementation(() => {});
-    const ctx: PropResolutionContext = { stateModel: { name: "Bob" } };
-    resolvePropValue({ $template: "Hi ${name}!" }, ctx);
-    resolvePropValue({ $template: "Hi ${name}!" }, ctx);
-    const calls = warnSpy.mock.calls.filter((c) =>
-      String(c[0]).includes('$template path "name"'),
+  it("resolves bare names against repeat item first", () => {
+    const ctx: PropResolutionContext = {
+      stateModel: { name: "Global" },
+      repeatItem: { name: "Alice", action: "signed up" },
+      repeatIndex: 0,
+    };
+    const result = resolvePropValue({ $template: "${name} ${action}" }, ctx);
+    expect(result).toBe("Alice signed up");
+  });
+
+  it("falls back to state model for bare names not in repeat item", () => {
+    const ctx: PropResolutionContext = {
+      stateModel: { fallback: "ok" },
+      repeatItem: { name: "Alice" },
+      repeatIndex: 0,
+    };
+    const result = resolvePropValue(
+      { $template: "${name} - ${fallback}" },
+      ctx,
     );
-    expect(calls).toHaveLength(1);
-    warnSpy.mockRestore();
-    _resetWarnedTemplatePaths();
+    expect(result).toBe("Alice - ok");
   });
 });

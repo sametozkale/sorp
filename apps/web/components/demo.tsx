@@ -18,65 +18,62 @@ import { PlaygroundRenderer } from "@/lib/render/renderer";
 import { playgroundCatalog } from "@/lib/render/catalog";
 import { buildCatalogDisplayData } from "@/lib/render/catalog-display";
 
-const SIMULATION_PROMPT = "Create a contact form with name, email, and message";
+const SIMULATION_PROMPT = "Show a team performance dashboard";
 
 interface SimulationStage {
   tree: Spec;
   stream: string;
 }
 
-// Shared state & element definitions for the progressive simulation stages.
-const FORM_STATE = { form: { name: "", email: "", message: "" } };
+const DASH_STATE = {
+  chartData: [
+    { label: "Mon", value: 12 },
+    { label: "Tue", value: 28 },
+    { label: "Wed", value: 19 },
+    { label: "Thu", value: 34 },
+    { label: "Fri", value: 45 },
+    { label: "Sat", value: 38 },
+    { label: "Sun", value: 52 },
+  ],
+};
 
-const NAME_INPUT = {
-  type: "Input",
+const METRIC_REVENUE = {
+  type: "Metric",
   props: {
-    label: "Name",
-    name: "name",
-    statePath: "/form/name",
-    checks: [{ type: "required", message: "Name is required" }],
+    label: "Weekly Revenue",
+    value: "12,400",
+    prefix: "$",
+    change: "+18%",
+    changeType: "positive",
   },
 } as const;
 
-const EMAIL_INPUT = {
-  type: "Input",
-  props: {
-    label: "Email",
-    name: "email",
-    type: "email",
-    statePath: "/form/email",
-    checks: [
-      { type: "required", message: "Email is required" },
-      { type: "email", message: "Please enter a valid email" },
-    ],
-  },
+const CHART = {
+  type: "LineGraph",
+  props: { data: { $state: "/chartData" } },
 } as const;
 
-const MESSAGE_INPUT = {
-  type: "Textarea",
-  props: {
-    label: "Message",
-    name: "message",
-    statePath: "/form/message",
-    checks: [{ type: "required", message: "Message is required" }],
-  },
+const SEP = { type: "Separator", props: {} } as const;
+
+const PROGRESS_DEALS = {
+  type: "Progress",
+  props: { value: 72, label: "Deals Closed -- 72%" },
 } as const;
 
-const SUBMIT_BUTTON = {
-  type: "Button",
-  props: { label: "Send Message", variant: "primary" },
-  on: { press: { action: "formSubmit" } },
+const PROGRESS_RETENTION = {
+  type: "Progress",
+  props: { value: 91, label: "Retention -- 91%" },
 } as const;
 
 const SIMULATION_STAGES: SimulationStage[] = [
   {
     tree: {
       root: "card",
-      state: FORM_STATE,
+      state: DASH_STATE,
       elements: {
         card: {
           type: "Card",
-          props: { title: "Contact Us", maxWidth: "md" },
+          props: { title: "Team Performance", maxWidth: "sm", centered: true },
           children: [],
         },
       },
@@ -86,72 +83,74 @@ const SIMULATION_STAGES: SimulationStage[] = [
   {
     tree: {
       root: "card",
-      state: FORM_STATE,
+      state: DASH_STATE,
       elements: {
         card: {
           type: "Card",
-          props: { title: "Contact Us", maxWidth: "md" },
-          children: ["name"],
+          props: { title: "Team Performance", maxWidth: "sm", centered: true },
+          children: ["m1"],
         },
-        name: NAME_INPUT,
+        m1: METRIC_REVENUE,
       },
     },
     stream:
-      '{"op":"add","path":"/elements/name","value":{"type":"Input","props":{"label":"Name","name":"name","statePath":"/form/name","checks":[{"type":"required","message":"Name is required"}]}}}',
+      '{"op":"add","path":"/elements/m1","value":{"type":"Metric","props":{"label":"Weekly Revenue","value":"12,400","prefix":"$","change":"+18%","changeType":"positive"}}}',
   },
   {
     tree: {
       root: "card",
-      state: FORM_STATE,
+      state: DASH_STATE,
       elements: {
         card: {
           type: "Card",
-          props: { title: "Contact Us", maxWidth: "md" },
-          children: ["name", "email"],
+          props: { title: "Team Performance", maxWidth: "sm", centered: true },
+          children: ["m1", "chart"],
         },
-        name: NAME_INPUT,
-        email: EMAIL_INPUT,
+        m1: METRIC_REVENUE,
+        chart: CHART,
       },
     },
     stream:
-      '{"op":"add","path":"/elements/email","value":{"type":"Input","props":{"label":"Email","name":"email","type":"email","statePath":"/form/email","checks":[{"type":"required","message":"Email is required"},{"type":"email","message":"Please enter a valid email"}]}}}',
+      '{"op":"add","path":"/elements/chart","value":{"type":"LineGraph","props":{"data":{"$state":"/chartData"}}}}',
   },
   {
     tree: {
       root: "card",
-      state: FORM_STATE,
+      state: DASH_STATE,
       elements: {
         card: {
           type: "Card",
-          props: { title: "Contact Us", maxWidth: "md" },
-          children: ["name", "email", "message"],
+          props: { title: "Team Performance", maxWidth: "sm", centered: true },
+          children: ["m1", "chart", "sep", "p1"],
         },
-        name: NAME_INPUT,
-        email: EMAIL_INPUT,
-        message: MESSAGE_INPUT,
+        m1: METRIC_REVENUE,
+        chart: CHART,
+        sep: SEP,
+        p1: PROGRESS_DEALS,
       },
     },
     stream:
-      '{"op":"add","path":"/elements/message","value":{"type":"Textarea","props":{"label":"Message","name":"message","statePath":"/form/message","checks":[{"type":"required","message":"Message is required"}]}}}',
+      '{"op":"add","path":"/elements/p1","value":{"type":"Progress","props":{"value":72,"label":"Deals Closed -- 72%"}}}',
   },
   {
     tree: {
       root: "card",
-      state: FORM_STATE,
+      state: DASH_STATE,
       elements: {
         card: {
           type: "Card",
-          props: { title: "Contact Us", maxWidth: "md" },
-          children: ["name", "email", "message", "submit"],
+          props: { title: "Team Performance", maxWidth: "sm", centered: true },
+          children: ["m1", "chart", "sep", "p1", "p2"],
         },
-        name: NAME_INPUT,
-        email: EMAIL_INPUT,
-        message: MESSAGE_INPUT,
-        submit: SUBMIT_BUTTON,
+        m1: METRIC_REVENUE,
+        chart: CHART,
+        sep: SEP,
+        p1: PROGRESS_DEALS,
+        p2: PROGRESS_RETENTION,
       },
     },
     stream:
-      '{"op":"add","path":"/elements/submit","value":{"type":"Button","props":{"label":"Send Message","variant":"primary"},"on":{"press":{"action":"formSubmit"}}}}',
+      '{"op":"add","path":"/elements/p2","value":{"type":"Progress","props":{"value":91,"label":"Retention -- 91%"}}}',
   },
 ];
 
@@ -211,10 +210,10 @@ function specToNested(spec: Spec): Record<string, unknown> {
 }
 
 const EXAMPLE_PROMPTS = [
-  "Create a login form with email and password",
-  "Build a feedback form with rating stars",
-  "Design a contact card with avatar",
-  "Make a settings panel with toggles",
+  "Recipe card with rating and ingredients",
+  "Order receipt with item list and total",
+  "Team member profile card",
+  "Notification inbox with alerts",
 ];
 
 export function Demo({
@@ -1117,7 +1116,7 @@ Open [http://localhost:3000](http://localhost:3000) to view.
             ))}
           </div>
           <div
-            className={`border border-border rounded bg-background font-mono text-xs text-left grid relative group ${fullscreen ? "flex-1 min-h-0" : "h-[28rem]"}`}
+            className={`border border-border rounded bg-background font-mono text-xs text-left grid relative group ${fullscreen ? "flex-1 min-h-0" : "h-[36rem]"}`}
           >
             {activeTab !== "catalog" && (
               <div className="absolute top-2 right-2 z-10">
@@ -1357,7 +1356,7 @@ Open [http://localhost:3000](http://localhost:3000) to view.
             </div>
           </div>
           <div
-            className={`border border-border rounded bg-background grid relative group ${fullscreen ? "flex-1 min-h-0" : "h-[28rem]"}`}
+            className={`border border-border rounded bg-background grid relative group ${fullscreen ? "flex-1 min-h-0" : "h-[36rem]"}`}
           >
             {renderView === "static" && (
               <div className="absolute top-2 right-2 z-10">
