@@ -2408,7 +2408,7 @@ Open [http://localhost:3000](http://localhost:3000) to view.
                 value={userPrompt}
                 onChange={(e) => setUserPrompt(e.target.value)}
                 placeholder={promptPlaceholder}
-                className="flex-1 bg-transparent outline-none font-['Inter'] placeholder:text-muted-foreground/50 placeholder:font-['Inter'] text-sm"
+                className="input-app-font flex-1 bg-transparent text-sm outline-none placeholder:text-muted-foreground/50"
                 disabled={isStreaming}
                 maxLength={140}
               />
@@ -2462,7 +2462,8 @@ Open [http://localhost:3000](http://localhost:3000) to view.
       </div>
 
       <div
-        className="fixed top-4 left-6 z-30 inline-block"
+        className="fixed top-4 left-[24px] z-30 inline-block"
+        style={{ left: 24 }}
         ref={projectMenuRef}
       >
         <button
@@ -2560,7 +2561,7 @@ Open [http://localhost:3000](http://localhost:3000) to view.
           </svg>
         </button>
         {showProjectMenu ? (
-          <div className="absolute left-0 top-full mt-2 w-max min-w-[220px] max-w-[360px] rounded-[12px] border border-[#f4f4f4] bg-white p-1.5 shadow-[0_6px_18px_rgba(0,0,0,0.08)]">
+          <div className="absolute left-0 top-full mt-2 w-max min-w-[180px] max-w-[280px] rounded-[12px] border border-[#f4f4f4] bg-white p-1.5 shadow-[0_6px_18px_rgba(0,0,0,0.08)]">
             <button
               onClick={() => {
                 setShowProjectMenu(false);
@@ -2584,7 +2585,7 @@ Open [http://localhost:3000](http://localhost:3000) to view.
               Back to projects
             </button>
             {otherProjects.length > 0 ? (
-              <div className="my-1 h-px bg-[#f4f4f4]" />
+              <div className="mx-2 my-1 h-px bg-[#f4f4f4]" />
             ) : null}
             <div className="max-h-52 overflow-auto">
               {otherProjects.map((project) => (
@@ -2627,7 +2628,7 @@ Open [http://localhost:3000](http://localhost:3000) to view.
         </div>
       </div>
       {workspaceView === "design" && currentTree?.root && (
-        <div className="fixed top-4 right-6 z-30">
+        <div className="fixed top-4 right-[24px] z-30" style={{ right: 24 }}>
           <button
             onClick={() => {
               if (annotationMode && annotations.length > 0) {
@@ -3263,7 +3264,7 @@ Open [http://localhost:3000](http://localhost:3000) to view.
                   }
                 }}
                 placeholder="Describe the change for this element..."
-                className="flex-1 bg-transparent outline-none font-['Inter'] placeholder:text-muted-foreground/50 text-sm"
+                className="input-app-font flex-1 bg-transparent text-sm outline-none placeholder:text-muted-foreground/50"
               />
               <button
                 onClick={addAnnotation}
@@ -3290,15 +3291,20 @@ Open [http://localhost:3000](http://localhost:3000) to view.
         )}
 
       {showProjectSettingsModal && currentProject && (
-        <div className="fixed inset-0 z-50 bg-black/45 flex items-center justify-center p-4">
-          <div className="w-full max-w-md rounded-[14px] border border-[#f4f4f4] bg-white p-5 shadow-xl">
-            <div className="flex items-start justify-between gap-3">
-              <h2 className="text-sm font-semibold">
-                {currentProject.title || "New component"}&apos;s Settings
-              </h2>
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/45 p-4 backdrop-blur-[2px]">
+          <div className="w-full max-w-lg rounded-[16px] border border-[#ececec] bg-white p-6 shadow-[0_22px_70px_rgba(0,0,0,0.2)]">
+            <div className="flex items-start justify-between gap-3 border-b border-[#f2f2f2] pb-4">
+              <div>
+                <h2 className="text-[17px] font-semibold tracking-[-0.01em] text-foreground">
+                  {currentProject.title || "New component"}&apos;s Settings
+                </h2>
+                <p className="mt-1 text-xs text-muted-foreground">
+                  Update project details and review metadata.
+                </p>
+              </div>
               <button
                 onClick={() => setShowProjectSettingsModal(false)}
-                className="text-muted-foreground hover:text-foreground transition-colors p-1"
+                className="rounded-[8px] p-1.5 text-muted-foreground transition-colors hover:bg-[#f7f7f7] hover:text-foreground"
                 aria-label="Close settings"
               >
                 <svg
@@ -3316,38 +3322,42 @@ Open [http://localhost:3000](http://localhost:3000) to view.
                 </svg>
               </button>
             </div>
-            <div className="mt-4 space-y-3 text-xs text-muted-foreground">
+            <div className="mt-5 space-y-4">
               <div>
-                <div className="mb-1">Project Name</div>
+                <div className="mb-1.5 text-xs font-medium text-foreground/90">
+                  Project Name
+                </div>
                 <input
                   value={projectTitleInput}
                   onChange={(e) => setProjectTitleInput(e.target.value)}
-                  className="w-full rounded-[10px] border border-[#f4f4f4] bg-white px-3 py-2 text-sm text-foreground outline-none"
+                  className="w-full rounded-[12px] border border-[#ececec] bg-white px-3.5 py-2.5 text-sm text-foreground outline-none transition focus:border-[#d8d8d8] focus:shadow-[0_0_0_3px_rgba(34,211,187,0.12)]"
                   placeholder="Project name"
                 />
               </div>
-              <div>
-                <div className="font-medium text-foreground/90">
-                  Created Date
+              <div className="grid gap-2 sm:grid-cols-2">
+                <div className="rounded-[12px] border border-[#f1f1f1] bg-[#fcfcfc] px-3 py-2.5">
+                  <div className="text-[11px] font-medium uppercase tracking-[0.04em] text-muted-foreground">
+                    Created Date
+                  </div>
+                  <div className="mt-1 text-sm text-foreground/85">
+                    {new Date(currentProject.created_at).toLocaleString()}
+                  </div>
                 </div>
-                <div>
-                  {new Date(currentProject.created_at).toLocaleString()}
-                </div>
-              </div>
-              <div>
-                <div className="font-medium text-foreground/90">
-                  Last Updated Date
-                </div>
-                <div>
-                  {new Date(currentProject.updated_at).toLocaleString()}
+                <div className="rounded-[12px] border border-[#f1f1f1] bg-[#fcfcfc] px-3 py-2.5">
+                  <div className="text-[11px] font-medium uppercase tracking-[0.04em] text-muted-foreground">
+                    Last Updated Date
+                  </div>
+                  <div className="mt-1 text-sm text-foreground/85">
+                    {new Date(currentProject.updated_at).toLocaleString()}
+                  </div>
                 </div>
               </div>
             </div>
-            <div className="mt-4 flex justify-end">
+            <div className="mt-6 flex justify-end">
               <button
                 onClick={() => void saveProjectTitle()}
                 disabled={isSavingProjectTitle || !projectTitleInput.trim()}
-                className="rounded-[10px] border border-[#f4f4f4] bg-white px-3 py-1.5 text-xs font-medium text-[#777] disabled:opacity-50"
+                className="inline-flex h-[34px] items-center rounded-[10px] border border-[#f4f4f4] bg-white px-4 text-xs font-medium text-[#4b4b4b] shadow-[0_1px_2px_rgba(0,0,0,0.04)] transition hover:bg-[#f7f7f7] disabled:cursor-not-allowed disabled:opacity-45"
               >
                 {isSavingProjectTitle ? "Saving..." : "Save"}
               </button>

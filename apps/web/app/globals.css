@@ -302,6 +302,11 @@ article table {
   background: rgba(96, 165, 250, 0.12) !important;
 }
 
+/* Compatibility guard: enforce 48px right offset for project detail top-right action */
+.fixed.top-4.right-6.z-30 {
+  right: 24px !important;
+}
+
 /* Sonner toast customizations */
 .toaster [data-sonner-toast] {
   width: fit-content !important;
@@ -333,5 +338,14 @@ article table {
 .toaster [data-sonner-toast]:hover [data-close-button] {
   opacity: 1;
   pointer-events: auto;
+}
+
+/* Use app default font for editable inputs/placeholders in workspace panels */
+.input-app-font {
+  font-family: var(--font-geist-sans), system-ui, sans-serif;
+}
+
+.input-app-font::placeholder {
+  font-family: var(--font-geist-sans), system-ui, sans-serif;
 }
 

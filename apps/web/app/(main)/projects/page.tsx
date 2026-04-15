@@ -11,6 +11,25 @@ interface ProjectRow {
   updated_at: string;
 }
 
+const FIGMA_ICONS = [
+  "https://www.figma.com/api/mcp/asset/902cf180-7ade-4fa8-a323-7c07afdc13d9", // 2157:43
+  "https://www.figma.com/api/mcp/asset/ff9bb4d9-db9f-422a-9222-be2bf64309dd", // 2157:17
+  "https://www.figma.com/api/mcp/asset/cd041521-ff96-4f0e-87f6-0f7308918985", // 2157:26
+  "https://www.figma.com/api/mcp/asset/820a5517-37d5-40a1-be65-ed06db07557a", // 2157:34
+  "https://www.figma.com/api/mcp/asset/a52bdb8e-c081-4856-86e1-2ffbca946347", // 2157:53
+  "https://www.figma.com/api/mcp/asset/675d24ab-2626-4ff4-b41d-647f2e4a5abd", // 2157:61
+  "https://www.figma.com/api/mcp/asset/e7a0c57c-5554-4fb3-9d50-0069ae2be82e", // 2157:71
+  "https://www.figma.com/api/mcp/asset/9939660a-6149-4dc6-b162-5688bfac5212", // 2157:80
+] as const;
+
+function hashProjectId(value: string): number {
+  let hash = 0;
+  for (let i = 0; i < value.length; i += 1) {
+    hash = (hash * 31 + value.charCodeAt(i)) >>> 0;
+  }
+  return hash;
+}
+
 const DEMO_PROJECT_TITLE = "Demo project";
 
 const DEMO_PROJECT_SPEC = {
@@ -72,8 +91,11 @@ export default async function ProjectsPage() {
 
   if (!hasSupabaseEnv) {
     return (
-      <section className="max-w-5xl mx-auto px-6 pt-4 pb-16">
-        <div className="flex items-center justify-between gap-3">
+      <section className="max-w-5xl mx-auto px-6 pt-24 pb-16">
+        <div
+          className="fixed top-4 left-[24px] right-[24px] z-30 flex items-center justify-between gap-3"
+          style={{ left: 24, right: 24 }}
+        >
           <div className="inline-flex h-[34px] items-center gap-1.5 rounded-[10px] border border-[#f4f4f4] bg-background/90 px-3 py-1.5 text-xs font-medium text-[#777]">
             <svg
               width="16"
@@ -227,8 +249,11 @@ export default async function ProjectsPage() {
   if (error) {
     if (isProjectsTableMissing(error.message)) {
       return (
-        <section className="max-w-5xl mx-auto px-6 pt-4 pb-16">
-          <div className="flex items-center justify-between gap-3">
+        <section className="max-w-5xl mx-auto px-6 pt-24 pb-16">
+          <div
+            className="fixed top-4 left-[24px] right-[24px] z-30 flex items-center justify-between gap-3"
+            style={{ left: 24, right: 24 }}
+          >
             <div className="inline-flex h-[34px] items-center gap-1.5 rounded-[10px] border border-[#f4f4f4] bg-background/90 px-3 py-1.5 text-xs font-medium text-[#777]">
               <svg
                 width="16"
@@ -399,8 +424,11 @@ export default async function ProjectsPage() {
   }
 
   return (
-    <section className="max-w-5xl mx-auto px-6 pt-4 pb-16">
-      <div className="flex items-center justify-between gap-3">
+    <section className="max-w-5xl mx-auto px-6 pt-24 pb-16">
+      <div
+        className="fixed top-4 left-[24px] right-[24px] z-30 flex items-center justify-between gap-3"
+        style={{ left: 24, right: 24 }}
+      >
         <div className="inline-flex h-[34px] items-center gap-1.5 rounded-[10px] border border-[#f4f4f4] bg-background/90 px-3 py-1.5 text-xs font-medium text-[#777]">
           <svg
             width="16"
@@ -500,53 +528,45 @@ export default async function ProjectsPage() {
       </div>
       <div className="flex min-h-[calc(100vh-220px)] items-center justify-center">
         {projectRows.length > 0 ? (
-          <div className="w-full grid grid-cols-1 sm:grid-cols-2 gap-3">
-            {projectRows.map((project) => (
-              <div
-                key={project.id}
-                className="rounded-[12px] border border-[#f4f4f4] bg-white p-4 hover:shadow-sm transition-shadow"
-              >
-                <div className="flex items-start justify-between gap-3">
-                  <Link
-                    href={`/projects/${project.id}`}
-                    className="min-w-0 flex-1"
+          <div className="w-full grid grid-cols-1 gap-3">
+            {projectRows.map((project) =>
+              (() => {
+                const seed = hashProjectId(project.id);
+                const iconUrl = FIGMA_ICONS[seed % FIGMA_ICONS.length]!;
+
+                return (
+                  <div
+                    key={project.id}
+                    className="relative mx-auto w-[480px] max-w-full rounded-[12px] border border-[#f4f4f4] bg-white p-4 transition-colors hover:border-[#eee]"
                   >
-                    <div className="text-sm font-medium truncate">
-                      {project.title || "New component"}
-                    </div>
-                  </Link>
-                  <details className="relative">
-                    <summary className="list-none inline-flex h-7 w-7 items-center justify-center rounded-[8px] border border-[#f4f4f4] text-[#777] hover:bg-[#f7f7f7] cursor-pointer">
-                      <svg
-                        width="14"
-                        height="14"
-                        viewBox="0 0 24 24"
-                        fill="none"
-                        stroke="currentColor"
-                        strokeWidth="2"
-                        strokeLinecap="round"
-                        strokeLinejoin="round"
-                        aria-hidden="true"
-                      >
-                        <circle cx="12" cy="12" r="1" />
-                        <circle cx="19" cy="12" r="1" />
-                        <circle cx="5" cy="12" r="1" />
-                      </svg>
-                    </summary>
-                    <div className="absolute right-0 top-full mt-1 min-w-[120px] rounded-[10px] border border-[#f4f4f4] bg-white p-1 shadow-[0_6px_18px_rgba(0,0,0,0.08)] z-20">
-                      <form action={deleteProjectAction}>
-                        <input
-                          type="hidden"
-                          name="projectId"
-                          value={project.id}
+                    <Link
+                      href={`/projects/${project.id}`}
+                      aria-label={`Open ${project.title || "New component"}`}
+                      className="absolute inset-0 z-0 rounded-[12px]"
+                    />
+                    <div className="relative z-10 flex items-start justify-between gap-3">
+                      <div className="min-w-0 flex flex-1 items-start gap-3">
+                        <img
+                          className="mt-0.5 h-4 w-4 shrink-0 self-start"
+                          aria-hidden="true"
+                          src={iconUrl}
+                          alt=""
                         />
-                        <button
-                          type="submit"
-                          className="w-full inline-flex items-center gap-1.5 rounded-[8px] px-2 py-1.5 text-left text-xs font-medium text-[#b42318] hover:bg-[#fff5f5]"
-                        >
+                        <div className="min-w-0 flex-1">
+                          <div className="truncate text-sm font-medium">
+                            {project.title || "New component"}
+                          </div>
+                          <div className="mt-2 text-xs text-muted-foreground">
+                            Updated{" "}
+                            {new Date(project.updated_at).toLocaleString()}
+                          </div>
+                        </div>
+                      </div>
+                      <details className="relative z-20">
+                        <summary className="list-none inline-flex h-7 w-7 items-center justify-center rounded-[8px] text-[#777] transition-colors hover:bg-[#f5f5f5] cursor-pointer">
                           <svg
-                            width="12"
-                            height="12"
+                            width="14"
+                            height="14"
                             viewBox="0 0 24 24"
                             fill="none"
                             stroke="currentColor"
@@ -555,23 +575,55 @@ export default async function ProjectsPage() {
                             strokeLinejoin="round"
                             aria-hidden="true"
                           >
-                            <path d="M3 6h18" />
-                            <path d="M8 6V4h8v2" />
-                            <rect x="6" y="6" width="12" height="14" rx="2" />
-                            <path d="M10 10v6" />
-                            <path d="M14 10v6" />
+                            <circle cx="12" cy="12" r="1" />
+                            <circle cx="19" cy="12" r="1" />
+                            <circle cx="5" cy="12" r="1" />
                           </svg>
-                          Delete
-                        </button>
-                      </form>
+                        </summary>
+                        <div className="absolute right-0 top-full mt-1 min-w-[120px] rounded-[10px] border border-[#f4f4f4] bg-white p-1 shadow-[0_6px_18px_rgba(0,0,0,0.08)] z-20">
+                          <form action={deleteProjectAction}>
+                            <input
+                              type="hidden"
+                              name="projectId"
+                              value={project.id}
+                            />
+                            <button
+                              type="submit"
+                              className="w-full inline-flex items-center gap-1.5 rounded-[8px] px-2 py-1.5 text-left text-xs font-medium text-[#b42318] hover:bg-[#fff5f5]"
+                            >
+                              <svg
+                                width="12"
+                                height="12"
+                                viewBox="0 0 24 24"
+                                fill="none"
+                                stroke="currentColor"
+                                strokeWidth="2"
+                                strokeLinecap="round"
+                                strokeLinejoin="round"
+                                aria-hidden="true"
+                              >
+                                <path d="M3 6h18" />
+                                <path d="M8 6V4h8v2" />
+                                <rect
+                                  x="6"
+                                  y="6"
+                                  width="12"
+                                  height="14"
+                                  rx="2"
+                                />
+                                <path d="M10 10v6" />
+                                <path d="M14 10v6" />
+                              </svg>
+                              Delete
+                            </button>
+                          </form>
+                        </div>
+                      </details>
                     </div>
-                  </details>
-                </div>
-                <div className="mt-2 text-xs text-muted-foreground">
-                  Updated {new Date(project.updated_at).toLocaleString()}
-                </div>
-              </div>
-            ))}
+                  </div>
+                );
+              })(),
+            )}
           </div>
         ) : (
           <div className="w-full">
