@@ -20,6 +20,9 @@ export const playgroundCatalog = defineCatalog(schema, {
         description: z.string().nullable(),
         maxWidth: z.enum(["sm", "md", "lg", "full"]).nullable(),
         centered: z.boolean().nullable(),
+        backgroundColor: z.string().nullable(),
+        borderColor: z.string().nullable(),
+        textColor: z.string().nullable(),
       }),
       slots: ["default"],
       description:
@@ -153,6 +156,7 @@ export const playgroundCatalog = defineCatalog(schema, {
       props: z.object({
         text: z.string(),
         level: z.enum(["h1", "h2", "h3", "h4"]).nullable(),
+        color: z.string().nullable(),
       }),
       description: "Heading text (h1-h4)",
       example: { text: "Welcome", level: "h1" },
@@ -164,6 +168,7 @@ export const playgroundCatalog = defineCatalog(schema, {
         variant: z
           .enum(["body", "caption", "muted", "lead", "code"])
           .nullable(),
+        color: z.string().nullable(),
       }),
       description:
         'Paragraph text. In repeat scopes, use { "$template": "${field1} ${field2}" } to interpolate item fields.',
@@ -205,6 +210,9 @@ export const playgroundCatalog = defineCatalog(schema, {
       props: z.object({
         text: z.string(),
         variant: z.enum(["default", "success", "warning", "danger"]).nullable(),
+        backgroundColor: z.string().nullable(),
+        textColor: z.string().nullable(),
+        borderColor: z.string().nullable(),
       }),
       description: "Status badge",
       example: { text: "Active", variant: "success" },
@@ -215,6 +223,9 @@ export const playgroundCatalog = defineCatalog(schema, {
         title: z.string(),
         message: z.string().nullable(),
         type: z.enum(["info", "success", "warning", "error"]).nullable(),
+        backgroundColor: z.string().nullable(),
+        textColor: z.string().nullable(),
+        borderColor: z.string().nullable(),
       }),
       description: "Alert banner",
       example: {
@@ -304,6 +315,7 @@ export const playgroundCatalog = defineCatalog(schema, {
     BarGraph: {
       props: z.object({
         title: z.string().nullable(),
+        color: z.string().nullable(),
         data: z.array(
           z.object({
             label: z.string(),
@@ -317,6 +329,7 @@ export const playgroundCatalog = defineCatalog(schema, {
     LineGraph: {
       props: z.object({
         title: z.string().nullable(),
+        color: z.string().nullable(),
         data: z.array(
           z.object({
             label: z.string(),
@@ -452,6 +465,9 @@ export const playgroundCatalog = defineCatalog(schema, {
           .enum(["primary", "secondary", "outline", "danger"])
           .nullable(),
         disabled: z.boolean().nullable(),
+        backgroundColor: z.string().nullable(),
+        textColor: z.string().nullable(),
+        borderColor: z.string().nullable(),
       }),
       events: ["press"],
       description:

@@ -7,6 +7,7 @@ import React, {
   useRef,
   useMemo,
 } from "react";
+import { useRouter } from "next/navigation";
 import { useUIStream } from "@json-render/react";
 import type { Spec } from "@json-render/core";
 import { collectUsedComponents, serializeProps } from "@json-render/codegen";
@@ -17,6 +18,7 @@ import { Toaster } from "./ui/sonner";
 import { PlaygroundRenderer } from "@/lib/render/renderer";
 import { playgroundCatalog } from "@/lib/render/catalog";
 import { buildCatalogDisplayData } from "@/lib/render/catalog-display";
+import { createSupabaseBrowserClient } from "@/lib/supabase/client";
 
 const SIMULATION_PROMPT = "Show a team performance dashboard";
 
@@ -158,10 +160,191 @@ type Mode = "simulation" | "interactive";
 type Phase = "typing" | "streaming" | "complete";
 type Tab = "stream" | "json" | "nested" | "catalog";
 type RenderView = "dynamic" | "static";
+type WorkspaceView = "design" | "code";
 
 interface DemoProps {
   fullscreen?: boolean;
   skipSimulation?: boolean;
+  projectId?: string;
+}
+
+interface AnnotationItem {
+  id: string;
+  target: string;
+  note: string;
+  markerTop: number;
+  markerLeft: number;
+}
+
+interface AnnotationPanelPos {
+  top: number;
+  left: number;
+}
+
+interface VersionEntry {
+  id: string;
+  label: string;
+  spec: Spec;
+  createdAt?: string;
+}
+
+interface ProjectEntry {
+  id: string;
+  title: string;
+  created_at: string;
+  updated_at: string;
+}
+
+function normalizeForComparison(value: unknown): unknown {
+  if (Array.isArray(value)) {
+    return value.map(normalizeForComparison);
+  }
+  if (value && typeof value === "object") {
+    const entries = Object.entries(value as Record<string, unknown>).sort(
+      ([a], [b]) => a.localeCompare(b),
+    );
+    return Object.fromEntries(
+      entries.map(([key, nested]) => [key, normalizeForComparison(nested)]),
+    );
+  }
+  return value;
+}
+
+function areSpecsEquivalent(a: Spec, b: Spec): boolean {
+  return (
+    JSON.stringify(normalizeForComparison(a)) ===
+    JSON.stringify(normalizeForComparison(b))
+  );
+}
+
+function validateAnnotationOnlyChanges(
+  baseSpec: Spec,
+  nextSpec: Spec,
+): { valid: boolean; reason?: string } {
+  if (baseSpec.root !== nextSpec.root) {
+    return {
+      valid: false,
+      reason: "Root element cannot change in annotation mode.",
+    };
+  }
+
+  const baseKeys = Object.keys(baseSpec.elements).sort();
+  const nextKeys = Object.keys(nextSpec.elements).sort();
+  if (JSON.stringify(baseKeys) !== JSON.stringify(nextKeys)) {
+    return {
+      valid: false,
+      reason: "Annotation mode cannot add or remove elements.",
+    };
+  }
+
+  if (
+    JSON.stringify(normalizeForComparison(baseSpec.state ?? {})) !==
+    JSON.stringify(normalizeForComparison(nextSpec.state ?? {}))
+  ) {
+    return {
+      valid: false,
+      reason: "Annotation mode cannot modify shared state.",
+    };
+  }
+
+  let hasPropChange = false;
+
+  for (const key of baseKeys) {
+    const baseEl = baseSpec.elements[key];
+    const nextEl = nextSpec.elements[key];
+    if (!baseEl || !nextEl) continue;
+
+    if (baseEl.type !== nextEl.type) {
+      return {
+        valid: false,
+        reason: "Annotation mode cannot change component types.",
+      };
+    }
+
+    if (
+      JSON.stringify(normalizeForComparison(baseEl.children ?? [])) !==
+      JSON.stringify(normalizeForComparison(nextEl.children ?? []))
+    ) {
+      return {
+        valid: false,
+        reason: "Annotation mode cannot change component hierarchy.",
+      };
+    }
+
+    if (
+      JSON.stringify(normalizeForComparison(baseEl.visible ?? null)) !==
+      JSON.stringify(normalizeForComparison(nextEl.visible ?? null))
+    ) {
+      return {
+        valid: false,
+        reason: "Annotation mode cannot change visibility rules.",
+      };
+    }
+
+    if (
+      JSON.stringify(normalizeForComparison(baseEl.on ?? null)) !==
+      JSON.stringify(normalizeForComparison(nextEl.on ?? null))
+    ) {
+      return {
+        valid: false,
+        reason: "Annotation mode cannot change interactions/actions.",
+      };
+    }
+
+    if (
+      JSON.stringify(normalizeForComparison(baseEl.repeat ?? null)) !==
+      JSON.stringify(normalizeForComparison(nextEl.repeat ?? null))
+    ) {
+      return {
+        valid: false,
+        reason: "Annotation mode cannot change repeat bindings.",
+      };
+    }
+
+    if (
+      JSON.stringify(normalizeForComparison(baseEl.props ?? {})) !==
+      JSON.stringify(normalizeForComparison(nextEl.props ?? {}))
+    ) {
+      hasPropChange = true;
+    }
+  }
+
+  if (!hasPropChange) {
+    return {
+      valid: false,
+      reason: "No annotation changes were applied to component props.",
+    };
+  }
+
+  return { valid: true };
+}
+
+function deriveProjectTitleFromSpec(spec: Spec): string | null {
+  const root = spec.elements[spec.root];
+  if (!root) return null;
+
+  const candidateFields = [
+    "title",
+    "label",
+    "name",
+    "text",
+    "heading",
+  ] as const;
+  for (const field of candidateFields) {
+    const value = root.props?.[field];
+    if (typeof value === "string" && value.trim()) return value.trim();
+  }
+
+  for (const childKey of root.children ?? []) {
+    const child = spec.elements[childKey];
+    if (!child) continue;
+    for (const field of candidateFields) {
+      const value = child.props?.[field];
+      if (typeof value === "string" && value.trim()) return value.trim();
+    }
+  }
+
+  return null;
 }
 
 /**
@@ -209,17 +392,24 @@ function specToNested(spec: Spec): Record<string, unknown> {
   return result;
 }
 
-const EXAMPLE_PROMPTS = [
-  "Recipe card with rating and ingredients",
-  "Order receipt with item list and total",
-  "Team member profile card",
-  "Notification inbox with alerts",
+const EXAMPLE_PROMPT_POOL = [
+  "Create a metric card showing monthly revenue and change",
+  "Generate a profile card component with avatar and role",
+  "Build a pricing card component with plan name and CTA",
+  "Create a compact notification item component with status",
+  "Generate a progress stats card with two indicators",
+  "Build a product feature card component with icon and text",
+  "Create an order summary card with subtotal and total",
+  "Generate a testimonial card component with quote and author",
 ];
 
 export function Demo({
   fullscreen = false,
   skipSimulation = false,
+  projectId,
 }: DemoProps) {
+  const router = useRouter();
+  const supabase = useMemo(() => createSupabaseBrowserClient(), []);
   const [mode, setMode] = useState<Mode>(
     skipSimulation ? "interactive" : "simulation",
   );
@@ -232,6 +422,30 @@ export function Demo({
   const [streamLines, setStreamLines] = useState<string[]>([]);
   const [activeTab, setActiveTab] = useState<Tab>("json");
   const [renderView, setRenderView] = useState<RenderView>("dynamic");
+  const [workspaceView, setWorkspaceView] = useState<WorkspaceView>("design");
+  const [annotationMode, setAnnotationMode] = useState(false);
+  const [annotations, setAnnotations] = useState<AnnotationItem[]>([]);
+  const [annotationInput, setAnnotationInput] = useState("");
+  const [selectedTarget, setSelectedTarget] = useState<string | null>(null);
+  const [annotationPanelPos, setAnnotationPanelPos] =
+    useState<AnnotationPanelPos | null>(null);
+  const [versions, setVersions] = useState<VersionEntry[]>([]);
+  const [activeVersionId, setActiveVersionId] = useState<string | null>(null);
+  const [currentProject, setCurrentProject] = useState<ProjectEntry | null>(
+    null,
+  );
+  const [allProjects, setAllProjects] = useState<ProjectEntry[]>([]);
+  const [resolvedProjectId, setResolvedProjectId] = useState<string | null>(
+    projectId ?? null,
+  );
+  const [isLoadingProject, setIsLoadingProject] = useState(true);
+  const [isPersistingVersion, setIsPersistingVersion] = useState(false);
+  const [showProjectMenu, setShowProjectMenu] = useState(false);
+  const [showProjectSettingsModal, setShowProjectSettingsModal] =
+    useState(false);
+  const [projectTitleInput, setProjectTitleInput] = useState("");
+  const [isSavingProjectTitle, setIsSavingProjectTitle] = useState(false);
+  const [isCreatingVersion, setIsCreatingVersion] = useState(false);
   const [simulationTree, setSimulationTree] = useState<Spec | null>(null);
   const [isFullscreen, setIsFullscreen] = useState(false);
   const [showExportModal, setShowExportModal] = useState(false);
@@ -243,14 +457,98 @@ export function Demo({
     new Set(),
   );
   const inputRef = useRef<HTMLInputElement>(null);
+  const annotationInputRef = useRef<HTMLInputElement>(null);
+  const renderSurfaceRef = useRef<HTMLDivElement>(null);
+  const hoveredElementRef = useRef<HTMLElement | null>(null);
+  const selectedElementRef = useRef<HTMLElement | null>(null);
+  const latestApiSpecRef = useRef<Spec | null>(null);
   const [catalogSection, setCatalogSection] = useState<
     "components" | "actions"
   >("components");
+  const [examplePrompts, setExamplePrompts] = useState(EXAMPLE_PROMPT_POOL);
+  const projectMenuRef = useRef<HTMLDivElement>(null);
 
   // Catalog data for the catalog tab
   const catalogData = useMemo(
     () => buildCatalogDisplayData(playgroundCatalog.data),
     [],
+  );
+
+  const loadProjects = useCallback(async () => {
+    const { data, error } = await supabase
+      .from("projects")
+      .select("id,title,created_at,updated_at")
+      .order("updated_at", { ascending: false });
+    if (error) throw error;
+    setAllProjects((data as ProjectEntry[]) ?? []);
+  }, [supabase]);
+
+  const loadProjectState = useCallback(
+    async (incomingProjectId?: string | null) => {
+      const target = incomingProjectId ?? resolvedProjectId;
+      setIsLoadingProject(true);
+
+      let effectiveProjectId = target ?? null;
+      if (!effectiveProjectId || effectiveProjectId === "new") {
+        const { data: created, error: createError } = await supabase
+          .from("projects")
+          .insert({ title: "New component" })
+          .select("id,title,created_at,updated_at")
+          .single();
+        if (createError || !created)
+          throw createError || new Error("Failed to create project.");
+        effectiveProjectId = created.id;
+        setResolvedProjectId(created.id);
+        setCurrentProject(created as ProjectEntry);
+        router.replace(`/projects/${created.id}`);
+      }
+
+      const { data: project, error: projectError } = await supabase
+        .from("projects")
+        .select("id,title,created_at,updated_at")
+        .eq("id", effectiveProjectId)
+        .single();
+
+      if (projectError || !project) {
+        router.replace("/projects");
+        throw projectError || new Error("Project not found.");
+      }
+
+      const { data: versionRows, error: versionError } = await supabase
+        .from("project_versions")
+        .select("id,label,spec_json,created_at")
+        .eq("project_id", effectiveProjectId)
+        .order("created_at", { ascending: true });
+      if (versionError) throw versionError;
+
+      const mappedVersions: VersionEntry[] = (
+        (versionRows as
+          | { id: string; label: string; spec_json: Spec; created_at: string }[]
+          | null) ?? []
+      ).map((row) => ({
+        id: row.id,
+        label: row.label,
+        spec: row.spec_json,
+        createdAt: row.created_at,
+      }));
+
+      setCurrentProject(project as ProjectEntry);
+      setProjectTitleInput((project as ProjectEntry).title || "New component");
+      setVersions(mappedVersions);
+      setActiveVersionId(
+        mappedVersions.length > 0
+          ? mappedVersions[mappedVersions.length - 1]!.id
+          : null,
+      );
+      setSimulationTree(
+        mappedVersions.length > 0
+          ? mappedVersions[mappedVersions.length - 1]!.spec
+          : null,
+      );
+      await loadProjects();
+      setIsLoadingProject(false);
+    },
+    [loadProjects, resolvedProjectId, router, supabase],
   );
 
   // Disable body scroll when any modal is open
@@ -264,6 +562,40 @@ export function Demo({
       document.body.style.overflow = "";
     };
   }, [isFullscreen, showExportModal]);
+
+  // Shuffle suggestions after hydration to avoid SSR/CSR mismatch.
+  useEffect(() => {
+    const prompts = [...EXAMPLE_PROMPT_POOL];
+    for (let i = prompts.length - 1; i > 0; i--) {
+      const j = Math.floor(Math.random() * (i + 1));
+      [prompts[i], prompts[j]] = [prompts[j]!, prompts[i]!];
+    }
+    setExamplePrompts(prompts);
+  }, []);
+
+  useEffect(() => {
+    setResolvedProjectId(projectId ?? null);
+  }, [projectId]);
+
+  useEffect(() => {
+    void loadProjectState(projectId ?? null).catch((error) => {
+      console.error("Project load error:", error);
+      setIsLoadingProject(false);
+      toast.error(error?.message || "Failed to load project.");
+    });
+  }, [loadProjectState, projectId]);
+
+  useEffect(() => {
+    if (!showProjectMenu) return;
+    const onClick = (event: MouseEvent) => {
+      const target = event.target as Node | null;
+      if (!target) return;
+      if (projectMenuRef.current?.contains(target)) return;
+      setShowProjectMenu(false);
+    };
+    document.addEventListener("mousedown", onClick);
+    return () => document.removeEventListener("mousedown", onClick);
+  }, [showProjectMenu]);
 
   // Use the library's useUIStream hook for real API calls
   const {
@@ -288,6 +620,331 @@ export function Demo({
     mode === "simulation"
       ? currentSimulationStage?.tree || simulationTree
       : apiSpec || simulationTree;
+  const showExamplePrompts = !(currentTree && currentTree.root);
+  const clearSelectedElement = useCallback(() => {
+    if (selectedElementRef.current) {
+      selectedElementRef.current.classList.remove("annotation-selected-target");
+      selectedElementRef.current = null;
+    }
+  }, []);
+
+  const clearHoveredElement = useCallback(() => {
+    if (hoveredElementRef.current) {
+      hoveredElementRef.current.classList.remove("annotation-hover-target");
+      hoveredElementRef.current = null;
+    }
+  }, []);
+
+  const handleRenderSurfaceMouseMove = useCallback(
+    (event: React.MouseEvent<HTMLDivElement>) => {
+      if (!annotationMode) return;
+      const host = renderSurfaceRef.current;
+      if (!host) return;
+
+      const target = event.target as HTMLElement | null;
+      if (!target) return;
+      if (target.closest("[data-annotation-ui='true']")) {
+        clearHoveredElement();
+        return;
+      }
+
+      const picked = target.closest("*") as HTMLElement | null;
+      if (
+        !picked ||
+        !host.contains(picked) ||
+        picked === selectedElementRef.current
+      ) {
+        clearHoveredElement();
+        return;
+      }
+
+      if (hoveredElementRef.current === picked) return;
+      clearHoveredElement();
+      picked.classList.add("annotation-hover-target");
+      hoveredElementRef.current = picked;
+    },
+    [annotationMode, clearHoveredElement],
+  );
+
+  const handleRenderSurfaceClick = useCallback(
+    (event: React.MouseEvent<HTMLDivElement>) => {
+      if (!annotationMode) return;
+      const host = renderSurfaceRef.current;
+      if (!host) return;
+      const target = event.target as HTMLElement | null;
+      if (!target) return;
+      if (target.closest("[data-annotation-ui='true']")) return;
+
+      const picked = target.closest("*") as HTMLElement | null;
+      if (!picked || !host.contains(picked)) return;
+
+      clearSelectedElement();
+      clearHoveredElement();
+      picked.classList.add("annotation-selected-target");
+      selectedElementRef.current = picked;
+
+      const text = (picked.textContent || "").trim().slice(0, 40);
+      const label = `${picked.tagName.toLowerCase()}${text ? `: "${text}"` : ""}`;
+      setSelectedTarget(label);
+
+      const rect = picked.getBoundingClientRect();
+      const panelWidth = 320;
+      const preferredTop = rect.bottom + 8;
+      const preferredLeft = rect.left;
+      const maxLeft = Math.max(8, window.innerWidth - panelWidth - 8);
+      const safeLeft = Math.min(Math.max(8, preferredLeft), maxLeft);
+      const safeTop = Math.min(
+        Math.max(8, preferredTop),
+        window.innerHeight - 220,
+      );
+      setAnnotationPanelPos({ top: safeTop, left: safeLeft });
+
+      requestAnimationFrame(() => {
+        annotationInputRef.current?.focus();
+      });
+    },
+    [annotationMode, clearHoveredElement, clearSelectedElement],
+  );
+
+  const addAnnotation = useCallback(() => {
+    if (!selectedTarget || !annotationInput.trim()) return;
+    const note = annotationInput.trim();
+    const rect = selectedElementRef.current?.getBoundingClientRect();
+    const markerTop = Math.max(8, (rect?.top ?? 40) - 10);
+    const markerLeft = Math.max(8, (rect?.left ?? 40) - 10);
+    setAnnotations((prev) => [
+      ...prev,
+      {
+        id: `${Date.now()}-${prev.length + 1}`,
+        target: selectedTarget,
+        note,
+        markerTop,
+        markerLeft,
+      },
+    ]);
+    setAnnotationInput("");
+  }, [annotationInput, selectedTarget]);
+
+  const saveAsNextVersion = useCallback(
+    async (spec: Spec): Promise<boolean> => {
+      if (!resolvedProjectId) return false;
+
+      const existing = versions.find((v) => areSpecsEquivalent(v.spec, spec));
+      if (existing) {
+        setActiveVersionId(existing.id);
+        setSimulationTree(existing.spec);
+        return false;
+      }
+
+      setIsPersistingVersion(true);
+      const nextIndex = versions.length + 1;
+      const label = `v${nextIndex}`;
+      const { data: inserted, error } = await supabase
+        .from("project_versions")
+        .insert({
+          project_id: resolvedProjectId,
+          label,
+          spec_json: JSON.parse(JSON.stringify(spec)),
+        })
+        .select("id,label,spec_json,created_at")
+        .single();
+
+      if (error || !inserted) {
+        setIsPersistingVersion(false);
+        toast.error(error?.message || "Failed to save the new version.");
+        return false;
+      }
+
+      const entry: VersionEntry = {
+        id: inserted.id,
+        label: inserted.label,
+        spec: inserted.spec_json as Spec,
+        createdAt: inserted.created_at,
+      };
+      const nextVersions = [...versions, entry];
+      setVersions(nextVersions);
+      setActiveVersionId(entry.id);
+      setSimulationTree(entry.spec);
+
+      const isDefaultTitle =
+        !currentProject?.title || currentProject.title === "New component";
+      if (isDefaultTitle) {
+        const derived = deriveProjectTitleFromSpec(entry.spec);
+        if (derived) {
+          const { data: updatedProject } = await supabase
+            .from("projects")
+            .update({ title: derived })
+            .eq("id", resolvedProjectId)
+            .select("id,title,created_at,updated_at")
+            .single();
+          if (updatedProject) {
+            setCurrentProject(updatedProject as ProjectEntry);
+            setProjectTitleInput((updatedProject as ProjectEntry).title);
+          }
+        } else {
+          await supabase
+            .from("projects")
+            .update({ updated_at: new Date().toISOString() })
+            .eq("id", resolvedProjectId)
+            .select("id,title,created_at,updated_at")
+            .single()
+            .then(({ data }) => {
+              if (data) setCurrentProject(data as ProjectEntry);
+            });
+        }
+      } else {
+        await supabase
+          .from("projects")
+          .update({ updated_at: new Date().toISOString() })
+          .eq("id", resolvedProjectId)
+          .select("id,title,created_at,updated_at")
+          .single()
+          .then(({ data }) => {
+            if (data) setCurrentProject(data as ProjectEntry);
+          });
+      }
+
+      await loadProjects();
+      setIsPersistingVersion(false);
+      return true;
+    },
+    [
+      currentProject?.title,
+      loadProjects,
+      resolvedProjectId,
+      supabase,
+      versions,
+    ],
+  );
+
+  const saveProjectTitle = useCallback(async () => {
+    if (!resolvedProjectId) return;
+    const title = projectTitleInput.trim();
+    if (!title) return;
+    setIsSavingProjectTitle(true);
+    const { data, error } = await supabase
+      .from("projects")
+      .update({ title })
+      .eq("id", resolvedProjectId)
+      .select("id,title,created_at,updated_at")
+      .single();
+    setIsSavingProjectTitle(false);
+    if (error || !data) {
+      toast.error(error?.message || "Failed to save project settings.");
+      return;
+    }
+    setCurrentProject(data as ProjectEntry);
+    await loadProjects();
+    toast.success("Project settings updated");
+  }, [loadProjects, projectTitleInput, resolvedProjectId, supabase]);
+
+  const requestChangedSpec = useCallback(
+    async (prompt: string, baseSpec?: Spec): Promise<Spec | null> => {
+      await send(prompt, baseSpec ? { previousSpec: baseSpec } : undefined);
+      let produced = latestApiSpecRef.current;
+      if (!produced?.root) return null;
+
+      if (!baseSpec?.root || !areSpecsEquivalent(produced, baseSpec)) {
+        return produced;
+      }
+
+      const forceChangePrompt = [
+        prompt,
+        "",
+        "IMPORTANT: Your output must include at least one concrete visual/style change versus previousSpec.",
+        "Do not return the same spec.",
+      ].join("\n");
+      await send(forceChangePrompt, { previousSpec: baseSpec });
+      produced = latestApiSpecRef.current;
+      if (!produced?.root) return null;
+      return produced;
+    },
+    [send],
+  );
+
+  const createVersionFromAnnotations = useCallback(async () => {
+    if (
+      !currentTree?.root ||
+      annotations.length === 0 ||
+      isCreatingVersion ||
+      isPersistingVersion
+    )
+      return;
+    const instructions = annotations
+      .map((a, index) => `${index + 1}. Target ${a.target}: ${a.note}`)
+      .join("\n");
+    const prompt = [
+      "Apply these visual annotations to the current UI.",
+      "STRICT RULES:",
+      "- Change ONLY what is explicitly requested in annotations.",
+      "- Do NOT add, remove, or reorder elements.",
+      "- Do NOT change component types, state, bindings, events, or visibility logic.",
+      "- Only update props on existing elements that are directly related to the requested edits.",
+      "",
+      instructions,
+    ].join("\n");
+    setIsCreatingVersion(true);
+    try {
+      const produced = await requestChangedSpec(prompt, currentTree);
+      if (!produced?.root) {
+        toast.error("Could not create a new version. Please try again.");
+        return;
+      }
+      if (areSpecsEquivalent(produced, currentTree)) {
+        toast.error("No changes were applied. Try a more specific annotation.");
+        return;
+      }
+      const annotationValidation = validateAnnotationOnlyChanges(
+        currentTree,
+        produced,
+      );
+      if (!annotationValidation.valid) {
+        toast.error(
+          annotationValidation.reason ||
+            "Annotation update changed more than requested.",
+        );
+        return;
+      }
+      if (produced?.root) {
+        const saved = await saveAsNextVersion(produced);
+        if (saved) {
+          setAnnotations([]);
+          setAnnotationInput("");
+          setSelectedTarget(null);
+          setAnnotationPanelPos(null);
+          setAnnotationMode(false);
+          clearSelectedElement();
+          clearHoveredElement();
+          toast.success("New version created");
+        }
+      }
+    } finally {
+      setIsCreatingVersion(false);
+    }
+  }, [
+    annotations,
+    clearHoveredElement,
+    clearSelectedElement,
+    currentTree,
+    isCreatingVersion,
+    isPersistingVersion,
+    requestChangedSpec,
+    saveAsNextVersion,
+  ]);
+
+  useEffect(() => {
+    if (!annotationMode) {
+      clearHoveredElement();
+      clearSelectedElement();
+      setSelectedTarget(null);
+      setAnnotationInput("");
+      setAnnotationPanelPos(null);
+    }
+  }, [annotationMode, clearHoveredElement, clearSelectedElement]);
+
+  useEffect(() => {
+    latestApiSpecRef.current = apiSpec;
+  }, [apiSpec]);
 
   const stopGeneration = useCallback(() => {
     if (mode === "simulation") {
@@ -352,10 +1009,33 @@ export function Demo({
   }, [mode, apiRawLines]);
 
   const handleSubmit = useCallback(async () => {
-    if (!userPrompt.trim() || isStreaming) return;
+    if (!userPrompt.trim() || isStreaming || isPersistingVersion) return;
     setStreamLines([]);
-    await send(userPrompt);
-  }, [userPrompt, isStreaming, send]);
+    const produced = await requestChangedSpec(
+      userPrompt,
+      currentTree ?? undefined,
+    );
+    if (!produced?.root) {
+      toast.error("Could not generate a new version. Please try again.");
+      return;
+    }
+    if (currentTree?.root && areSpecsEquivalent(produced, currentTree)) {
+      toast.error(
+        "No changes detected. Please provide a more specific prompt.",
+      );
+      return;
+    }
+    if (produced?.root) {
+      await saveAsNextVersion(produced);
+    }
+  }, [
+    userPrompt,
+    isStreaming,
+    isPersistingVersion,
+    requestChangedSpec,
+    currentTree,
+    saveAsNextVersion,
+  ]);
 
   const jsonCode = currentTree
     ? JSON.stringify(currentTree, null, 2)
@@ -975,14 +1655,48 @@ Open [http://localhost:3000](http://localhost:3000) to view.
     }, 0);
   }, []);
 
+  if (isLoadingProject) {
+    return (
+      <div className="w-full max-w-5xl mx-auto pb-36">
+        <div className="h-[36rem] rounded-[16px] border border-[#f4f4f4] bg-white flex items-center justify-center text-sm text-muted-foreground">
+          Loading project...
+        </div>
+      </div>
+    );
+  }
+
   return (
     <div
-      className={`w-full text-left ${fullscreen ? "h-full flex flex-col" : "max-w-5xl mx-auto"}`}
+      className={`w-full text-left ${fullscreen ? "h-full flex flex-col" : "max-w-5xl mx-auto pb-36"}`}
     >
       {/* Prompt input */}
-      <div className={fullscreen ? "mb-4" : "mb-6"}>
+      <div
+        className={`${
+          fullscreen
+            ? "mb-4 h-32 flex flex-col justify-end items-center"
+            : "fixed left-1/2 -translate-x-1/2 bottom-6 z-20 w-[360px] flex flex-col justify-end items-center"
+        }`}
+      >
+        {showExamplePrompts && (
+          <div className="w-full mb-2 flex flex-wrap gap-1.5 justify-start">
+            {(fullscreen
+              ? examplePrompts.slice(0, 4)
+              : examplePrompts.slice(0, 2)
+            ).map((prompt) => (
+              <button
+                key={prompt}
+                onClick={() => handleExampleClick(prompt)}
+                className={`${
+                  fullscreen ? "px-3 py-1.5" : "px-2 py-1"
+                } text-xs rounded-full border border-[#f4f4f4] text-muted-foreground hover:text-foreground hover:border-[#f4f4f4] transition-colors`}
+              >
+                {prompt}
+              </button>
+            ))}
+          </div>
+        )}
         <div
-          className="border border-border rounded p-3 bg-background font-mono text-sm min-h-[44px] flex items-center justify-between cursor-text"
+          className="w-full border border-[#f4f4f4] rounded-[16px] pl-3 pr-2 py-2 bg-background font-mono text-sm min-h-[44px] flex items-center justify-between cursor-text"
           onClick={() => {
             if (mode === "simulation") {
               setMode("interactive");
@@ -1017,7 +1731,7 @@ Open [http://localhost:3000](http://localhost:3000) to view.
                 value={userPrompt}
                 onChange={(e) => setUserPrompt(e.target.value)}
                 placeholder="Describe what you want to build..."
-                className="flex-1 bg-transparent outline-none placeholder:text-muted-foreground/50 text-base"
+                className="flex-1 bg-transparent outline-none font-['Inter'] placeholder:text-muted-foreground/50 placeholder:font-['Inter'] text-sm"
                 disabled={isStreaming}
                 maxLength={140}
               />
@@ -1048,8 +1762,8 @@ Open [http://localhost:3000](http://localhost:3000) to view.
                 e.stopPropagation();
                 handleSubmit();
               }}
-              disabled={!userPrompt.trim()}
-              className="ml-2 w-7 h-7 rounded-full bg-primary text-primary-foreground flex items-center justify-center hover:bg-primary/90 transition-colors disabled:opacity-30"
+              disabled={!userPrompt.trim() || isPersistingVersion}
+              className="ml-2 w-7 h-7 rounded-[10px] bg-primary text-primary-foreground flex items-center justify-center hover:bg-primary/90 transition-colors disabled:opacity-30"
               aria-label="Submit"
             >
               <svg
@@ -1062,61 +1776,249 @@ Open [http://localhost:3000](http://localhost:3000) to view.
                 strokeLinecap="round"
                 strokeLinejoin="round"
               >
-                <path d="M12 5v14" />
-                <path d="M19 12l-7 7-7-7" />
+                <path d="M12 19V5" />
+                <path d="M5 12l7-7 7 7" />
               </svg>
             </button>
           )}
         </div>
-        {fullscreen ? (
-          <div className="mt-3 flex flex-wrap gap-2 justify-center">
-            {EXAMPLE_PROMPTS.map((prompt) => (
-              <button
-                key={prompt}
-                onClick={() => handleExampleClick(prompt)}
-                className="text-xs px-3 py-1.5 rounded-full border border-border text-muted-foreground hover:text-foreground hover:border-foreground/50 transition-colors"
-              >
-                {prompt}
-              </button>
-            ))}
-          </div>
-        ) : (
-          <div className="mt-2 flex flex-wrap gap-1.5 justify-center">
-            {EXAMPLE_PROMPTS.slice(0, 2).map((prompt) => (
-              <button
-                key={prompt}
-                onClick={() => handleExampleClick(prompt)}
-                className="text-xs px-2 py-1 rounded-full border border-border text-muted-foreground hover:text-foreground hover:border-foreground/50 transition-colors"
-              >
-                {prompt}
-              </button>
-            ))}
-          </div>
-        )}
       </div>
 
+      <div className="fixed top-4 left-6 z-30" ref={projectMenuRef}>
+        <button
+          onClick={() => setShowProjectMenu((prev) => !prev)}
+          className="inline-flex items-center gap-1.5 rounded-[10px] border border-[#f4f4f4] bg-background/90 px-3 py-1.5 text-xs font-medium text-[#777] backdrop-blur-sm"
+        >
+          <svg
+            width="16"
+            height="16"
+            viewBox="0 0 40 40"
+            fill="none"
+            xmlns="http://www.w3.org/2000/svg"
+            aria-hidden="true"
+            className="shrink-0"
+          >
+            <g clipPath="url(#project-logo-clip)">
+              <rect
+                x="15.6024"
+                y="15.6002"
+                width="8.79518"
+                height="8.79518"
+                rx="1.93976"
+                fill="#22D3BB"
+                stroke="#22D3BB"
+                strokeWidth="0.120482"
+              />
+              <path
+                d="M10.9157 0.0605469H15.8317C16.9028 0.060738 17.7711 0.928819 17.7711 2V6.91602C17.771 7.98703 16.9027 8.85528 15.8317 8.85547H8.97623V2C8.97623 0.928701 9.84438 0.0605469 10.9157 0.0605469Z"
+                fill="#22D3BB"
+                stroke="#22D3BB"
+                strokeWidth="0.120482"
+              />
+              <path
+                d="M2 8.9762H8.85547V15.8317C8.85528 16.9027 7.98703 17.7709 6.91602 17.7711H2C0.928819 17.7711 0.0607375 16.9028 0.0605469 15.8317V10.9156C0.0605473 9.84435 0.928701 8.9762 2 8.9762Z"
+                fill="#22D3BB"
+                stroke="#22D3BB"
+                strokeWidth="0.120482"
+              />
+              <path
+                d="M38.0004 8.9762C39.0715 8.97639 39.9398 9.84447 39.9398 10.9156V15.8317C39.9396 16.9027 39.0714 17.7709 38.0004 17.7711H33.0844C32.0132 17.7711 31.1451 16.9028 31.1449 15.8317V8.9762H38.0004Z"
+                fill="#22D3BB"
+                stroke="#22D3BB"
+                strokeWidth="0.120482"
+              />
+              <path
+                d="M33.0844 22.1405H38.0004C39.0715 22.1407 39.9398 23.0088 39.9398 24.08V28.996C39.9396 30.067 39.0714 30.9353 38.0004 30.9355H31.1449V24.08C31.1449 23.0087 32.0131 22.1405 33.0844 22.1405Z"
+                fill="#22D3BB"
+                stroke="#22D3BB"
+                strokeWidth="0.120482"
+              />
+              <path
+                d="M24.1687 31.0605H31.0242V37.916C31.024 38.987 30.1558 39.8553 29.0847 39.8555H24.1687C23.0976 39.8555 22.2295 38.9872 22.2293 37.916V33C22.2293 31.9287 23.0974 31.0605 24.1687 31.0605Z"
+                fill="#22D3BB"
+                stroke="#22D3BB"
+                strokeWidth="0.120482"
+              />
+              <path
+                d="M15.8317 31.0605C16.9028 31.0607 17.7711 31.9288 17.7711 33V37.916C17.771 38.987 16.9027 39.8553 15.8317 39.8555H10.9157C9.8445 39.8555 8.97642 38.9872 8.97623 37.916V31.0605H15.8317Z"
+                fill="#22D3BB"
+                stroke="#22D3BB"
+                strokeWidth="0.120482"
+              />
+              <path
+                d="M2 22.1405H6.91602C7.98715 22.1407 8.85547 23.0088 8.85547 24.08V30.9355H2C0.928819 30.9355 0.0607375 30.0671 0.0605469 28.996V24.08C0.0605473 23.0087 0.928701 22.1405 2 22.1405Z"
+                fill="#22D3BB"
+                stroke="#22D3BB"
+                strokeWidth="0.120482"
+              />
+              <path
+                d="M24.1687 0.0605469H29.0847C30.1559 0.060738 31.0242 0.928819 31.0242 2V8.85547H24.1687C23.0976 8.85547 22.2295 7.98715 22.2293 6.91602V2C22.2293 0.928701 23.0974 0.0605469 24.1687 0.0605469Z"
+                fill="#22D3BB"
+                stroke="#22D3BB"
+                strokeWidth="0.120482"
+              />
+            </g>
+            <defs>
+              <clipPath id="project-logo-clip">
+                <rect width="40" height="40" fill="white" />
+              </clipPath>
+            </defs>
+          </svg>
+          <span className="mx-2">/</span>
+          <span>{currentProject?.title || "New component"}</span>
+          <svg
+            width="12"
+            height="12"
+            viewBox="0 0 24 24"
+            fill="none"
+            stroke="currentColor"
+            strokeWidth="2"
+            strokeLinecap="round"
+            strokeLinejoin="round"
+          >
+            <path d="m6 9 6 6 6-6" />
+          </svg>
+        </button>
+        {showProjectMenu ? (
+          <div className="mt-2 min-w-[220px] rounded-[12px] border border-[#f4f4f4] bg-white p-1.5 shadow-[0_6px_18px_rgba(0,0,0,0.08)]">
+            <button
+              onClick={() => {
+                setShowProjectMenu(false);
+                router.push("/projects");
+              }}
+              className="w-full text-left rounded-[8px] px-2 py-1.5 text-xs font-medium text-[#777] hover:bg-[#f7f7f7]"
+            >
+              Back to projects
+            </button>
+            <div className="my-1 h-px bg-[#f4f4f4]" />
+            <div className="max-h-52 overflow-auto">
+              {allProjects
+                .filter((project) => project.id !== currentProject?.id)
+                .map((project) => (
+                  <button
+                    key={project.id}
+                    onClick={() => {
+                      setShowProjectMenu(false);
+                      router.push(`/projects/${project.id}`);
+                    }}
+                    className="w-full text-left rounded-[8px] px-2 py-1.5 text-xs text-[#777] hover:bg-[#f7f7f7]"
+                  >
+                    {project.title || "New component"}
+                  </button>
+                ))}
+            </div>
+          </div>
+        ) : null}
+      </div>
+
+      <div className="fixed top-4 left-1/2 -translate-x-1/2 z-30">
+        <div className="inline-flex items-center rounded-[10px] border border-[#f4f4f4] bg-background/90 p-0.5 backdrop-blur-sm">
+          {(
+            [
+              { key: "design", label: "Design" },
+              { key: "code", label: "Code" },
+            ] as const
+          ).map(({ key, label }) => (
+            <button
+              key={key}
+              onClick={() => setWorkspaceView(key)}
+              className={`rounded-[8px] border px-3.5 py-1.5 text-xs font-medium transition-colors ${
+                workspaceView === key
+                  ? "border-[#f8f8f8] bg-white text-foreground shadow-[0_1px_3px_rgba(0,0,0,0.09)]"
+                  : "border-transparent text-muted-foreground hover:text-foreground"
+              }`}
+            >
+              {label}
+            </button>
+          ))}
+        </div>
+      </div>
+      {workspaceView === "design" && currentTree?.root && (
+        <div className="fixed top-4 right-6 z-30">
+          <button
+            onClick={() => {
+              if (annotationMode && annotations.length > 0) {
+                void createVersionFromAnnotations();
+                return;
+              }
+              setAnnotationMode((prev) => !prev);
+            }}
+            className={`inline-flex items-center gap-1.5 rounded-[10px] border px-3 py-1.5 text-xs font-medium transition-colors ${
+              annotationMode && annotations.length > 0
+                ? "border-[#f4f4f4] bg-white text-[#22D3BB] shadow-[0_1px_3px_rgba(0,0,0,0.09)]"
+                : annotationMode
+                  ? "border-[#fecaca] bg-[#fff5f5] text-[#b42318] shadow-[0_1px_3px_rgba(0,0,0,0.06)]"
+                  : "border-[#f4f4f4] bg-background/90 text-muted-foreground hover:text-foreground backdrop-blur-sm"
+            }`}
+          >
+            {annotationMode && annotations.length > 0 ? (
+              <svg
+                width="12"
+                height="12"
+                viewBox="0 0 24 24"
+                fill="none"
+                stroke="currentColor"
+                strokeWidth="2"
+                strokeLinecap="round"
+                strokeLinejoin="round"
+              >
+                <path d="M20 6 9 17l-5-5" />
+              </svg>
+            ) : (
+              <svg
+                width="12"
+                height="12"
+                viewBox="0 0 24 24"
+                fill="none"
+                stroke="currentColor"
+                strokeWidth="2"
+                strokeLinecap="round"
+                strokeLinejoin="round"
+              >
+                <path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z" />
+                <path d="M12 7v6" />
+                <path d="M9 10h6" />
+              </svg>
+            )}
+            {annotationMode && annotations.length > 0
+              ? isCreatingVersion
+                ? "Creating Version..."
+                : "Create Version"
+              : annotationMode
+                ? "Exit Annotation Mode"
+                : "Annotation Mode"}
+          </button>
+        </div>
+      )}
+
       <div
-        className={`grid lg:grid-cols-2 gap-4 ${fullscreen ? "flex-1 min-h-0" : ""}`}
+        className={`grid grid-cols-1 gap-4 ${fullscreen ? "flex-1 min-h-0" : ""}`}
       >
         {/* Tabbed code/stream/json panel */}
-        <div className={`min-w-0 ${fullscreen ? "flex flex-col" : ""}`}>
-          <div className="flex items-center gap-4 mb-2 h-6 shrink-0">
-            {(["json", "nested", "stream", "catalog"] as const).map((tab) => (
-              <button
-                key={tab}
-                onClick={() => setActiveTab(tab)}
-                className={`text-xs font-mono transition-colors ${
-                  activeTab === tab
-                    ? "text-foreground"
-                    : "text-muted-foreground hover:text-foreground"
-                }`}
-              >
-                {tab}
-              </button>
-            ))}
+        <div
+          className={`min-w-0 ${fullscreen ? "flex flex-col" : ""} ${
+            workspaceView === "code" ? "block" : "hidden"
+          }`}
+        >
+          <div className="mb-2 flex justify-center shrink-0">
+            <div className="inline-flex items-center rounded-[10px] border border-[#f4f4f4] bg-[#f7f7f7] p-0.5">
+              {(["json", "nested", "stream", "catalog"] as const).map((tab) => (
+                <button
+                  key={tab}
+                  onClick={() => setActiveTab(tab)}
+                  className={`rounded-[8px] border px-3 py-1 text-[11px] font-medium transition-colors ${
+                    activeTab === tab
+                      ? "border-[#f8f8f8] bg-white text-foreground shadow-[0_1px_2px_rgba(0,0,0,0.06)]"
+                      : "border-transparent text-muted-foreground hover:text-foreground"
+                  }`}
+                >
+                  {tab}
+                </button>
+              ))}
+            </div>
           </div>
           <div
-            className={`border border-border rounded bg-background font-mono text-xs text-left grid relative group ${fullscreen ? "flex-1 min-h-0" : "h-[36rem]"}`}
+            className={`mx-auto w-[540px] max-w-full border border-border rounded-[20px] bg-background font-mono text-xs text-left grid relative group ${fullscreen ? "flex-1 min-h-0" : "h-[36rem]"}`}
           >
             {activeTab !== "catalog" && (
               <div className="absolute top-2 right-2 z-10">
@@ -1133,14 +2035,13 @@ Open [http://localhost:3000](http://localhost:3000) to view.
               </div>
             )}
             <div
-              className={`overflow-auto ${activeTab === "stream" ? "" : "hidden"}`}
+              className={`overflow-auto p-6 ${activeTab === "stream" ? "" : "hidden"}`}
             >
               {streamLines.length > 0 ? (
                 <>
                   <CodeBlock
                     code={streamLines.join("\n")}
                     lang="json"
-                    fillHeight
                     hideCopyButton
                   />
                   {showLoadingDots && (
@@ -1158,27 +2059,17 @@ Open [http://localhost:3000](http://localhost:3000) to view.
               )}
             </div>
             <div
-              className={`overflow-auto ${activeTab === "json" ? "" : "hidden"}`}
+              className={`overflow-auto p-6 ${activeTab === "json" ? "" : "hidden"}`}
             >
-              <CodeBlock
-                code={jsonCode}
-                lang="json"
-                fillHeight
-                hideCopyButton
-              />
+              <CodeBlock code={jsonCode} lang="json" hideCopyButton />
             </div>
             <div
-              className={`overflow-auto ${activeTab === "nested" ? "" : "hidden"}`}
+              className={`overflow-auto p-6 ${activeTab === "nested" ? "" : "hidden"}`}
             >
-              <CodeBlock
-                code={nestedCode}
-                lang="json"
-                fillHeight
-                hideCopyButton
-              />
+              <CodeBlock code={nestedCode} lang="json" hideCopyButton />
             </div>
             <div
-              className={`overflow-auto ${activeTab === "catalog" ? "" : "hidden"}`}
+              className={`overflow-auto p-6 ${activeTab === "catalog" ? "" : "hidden"}`}
             >
               <div className="h-full flex flex-col text-sm font-sans">
                 <div className="flex items-center gap-3 px-3 h-9 border-b border-border">
@@ -1301,75 +2192,52 @@ Open [http://localhost:3000](http://localhost:3000) to view.
         </div>
 
         {/* Rendered output using json-render */}
-        <div className={`min-w-0 ${fullscreen ? "flex flex-col" : ""}`}>
-          <div className="flex items-center justify-between mb-2 h-6 shrink-0">
-            <div className="flex items-center gap-4">
+        <div
+          className={`min-w-0 ${fullscreen ? "flex flex-col" : ""} ${
+            workspaceView === "design" ? "block" : "hidden"
+          }`}
+        >
+          <div
+            className={`shrink-0 ${
+              currentTree?.root
+                ? "fixed left-1/2 -translate-x-1/2 bottom-[calc(1.5rem+44px+16px)] z-20 flex justify-center"
+                : "mb-2 flex justify-center"
+            }`}
+          >
+            <div className="inline-flex items-center rounded-[10px] border border-[#f4f4f4] bg-[#f7f7f7] p-0.5">
               {(
                 [
-                  { key: "dynamic", label: "live render" },
-                  { key: "static", label: "static code" },
+                  { key: "dynamic", label: "Live Render" },
+                  { key: "static", label: "Static Code" },
                 ] as const
               ).map(({ key, label }) => (
                 <button
                   key={key}
                   onClick={() => setRenderView(key)}
-                  className={`text-xs font-mono transition-colors ${
+                  className={`rounded-[8px] border px-3 py-1 text-[11px] font-medium transition-colors ${
                     renderView === key
-                      ? "text-foreground"
-                      : "text-muted-foreground hover:text-foreground"
+                      ? "border-[#f8f8f8] bg-white text-foreground shadow-[0_1px_2px_rgba(0,0,0,0.06)]"
+                      : "border-transparent text-muted-foreground hover:text-foreground"
                   }`}
                 >
                   {label}
                 </button>
               ))}
             </div>
-            <div className="flex items-center gap-2">
-              <button
-                onClick={() => setShowExportModal(true)}
-                disabled={!currentTree?.root}
-                className="text-xs font-mono text-muted-foreground hover:text-foreground transition-colors disabled:opacity-30 disabled:cursor-not-allowed"
-                title="Export as Next.js project"
-              >
-                export
-              </button>
-              <button
-                onClick={() => setIsFullscreen(true)}
-                className="text-muted-foreground hover:text-foreground transition-colors"
-                aria-label="Maximize"
-              >
-                <svg
-                  width="14"
-                  height="14"
-                  viewBox="0 0 24 24"
-                  fill="none"
-                  stroke="currentColor"
-                  strokeWidth="2"
-                  strokeLinecap="round"
-                  strokeLinejoin="round"
-                >
-                  <path d="M8 3H5a2 2 0 0 0-2 2v3" />
-                  <path d="M21 8V5a2 2 0 0 0-2-2h-3" />
-                  <path d="M3 16v3a2 2 0 0 0 2 2h3" />
-                  <path d="M16 21h3a2 2 0 0 0 2-2v-3" />
-                </svg>
-              </button>
-            </div>
           </div>
           <div
-            className={`border border-border rounded bg-background grid relative group ${fullscreen ? "flex-1 min-h-0" : "h-[36rem]"}`}
+            className={`rounded bg-background grid relative group ${fullscreen ? "flex-1 min-h-0" : "h-[36rem]"}`}
           >
-            {renderView === "static" && (
-              <div className="absolute top-2 right-2 z-10">
-                <CopyButton
-                  text={generatedCode}
-                  className="opacity-0 group-hover:opacity-100 text-muted-foreground"
-                />
-              </div>
-            )}
             {renderView === "dynamic" ? (
-              <div className="overflow-auto">
+              <div
+                ref={renderSurfaceRef}
+                onClickCapture={handleRenderSurfaceClick}
+                onMouseMoveCapture={handleRenderSurfaceMouseMove}
+                onMouseLeave={clearHoveredElement}
+                className={`overflow-auto ${annotationMode ? "cursor-crosshair" : ""}`}
+              >
                 {currentTree && currentTree.root ? (
-                  <div className="animate-in fade-in duration-200 w-full min-h-full flex items-center justify-center p-3 py-4">
+                  <div className="animate-in fade-in duration-200 w-full h-full box-border flex items-center justify-center px-3 pt-4 pb-28">
                     <PlaygroundRenderer
                       spec={currentTree}
                       loading={isStreaming || isStreamingSimulation}
@@ -1382,19 +2250,264 @@ Open [http://localhost:3000](http://localhost:3000) to view.
                 )}
               </div>
             ) : (
-              <div className="overflow-auto h-full font-mono text-xs text-left">
-                <CodeBlock
-                  code={generatedCode}
-                  lang="tsx"
-                  fillHeight
-                  hideCopyButton
-                />
+              <div className="h-full overflow-auto p-6">
+                <div className="mx-auto w-fit max-w-full">
+                  <div className="relative rounded-[16px] border border-[#f4f4f4] bg-background p-6 font-mono text-xs text-left">
+                    <div className="absolute top-3 right-3 z-10">
+                      <CopyButton
+                        text={generatedCode}
+                        className="text-muted-foreground"
+                      />
+                    </div>
+                    <CodeBlock code={generatedCode} lang="tsx" hideCopyButton />
+                  </div>
+                </div>
               </div>
             )}
           </div>
           <Toaster position="bottom-right" />
         </div>
       </div>
+
+      {workspaceView === "design" && (
+        <div className="fixed bottom-6 left-6 z-20 flex flex-col items-start gap-2">
+          <button
+            onClick={() => setShowExportModal(true)}
+            disabled={!currentTree?.root}
+            className="inline-flex items-center gap-1.5 rounded-[10px] border border-[#f4f4f4] bg-white px-2.5 py-1.5 text-[11px] font-medium text-[#777] hover:text-[#777] transition-colors disabled:opacity-40 disabled:cursor-not-allowed"
+            title="Export as Next.js project"
+          >
+            <svg
+              width="12"
+              height="12"
+              viewBox="0 0 24 24"
+              fill="none"
+              stroke="currentColor"
+              strokeWidth="2"
+              strokeLinecap="round"
+              strokeLinejoin="round"
+            >
+              <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4" />
+              <polyline points="7 10 12 15 17 10" />
+              <line x1="12" y1="15" x2="12" y2="3" />
+            </svg>
+            Export
+          </button>
+          <button
+            onClick={() => setIsFullscreen(true)}
+            className="inline-flex items-center gap-1.5 rounded-[10px] border border-[#f4f4f4] bg-white px-2.5 py-1.5 text-[11px] font-medium text-[#777] hover:text-[#777] transition-colors"
+            aria-label="Maximize"
+          >
+            <svg
+              width="12"
+              height="12"
+              viewBox="0 0 24 24"
+              fill="none"
+              stroke="currentColor"
+              strokeWidth="2"
+              strokeLinecap="round"
+              strokeLinejoin="round"
+            >
+              <path d="M8 3H5a2 2 0 0 0-2 2v3" />
+              <path d="M21 8V5a2 2 0 0 0-2-2h-3" />
+              <path d="M3 16v3a2 2 0 0 0 2 2h3" />
+              <path d="M16 21h3a2 2 0 0 0 2-2v-3" />
+            </svg>
+            Maximize
+          </button>
+          <button
+            onClick={() => setShowProjectSettingsModal(true)}
+            className="inline-flex items-center gap-1.5 rounded-[10px] border border-[#f4f4f4] bg-white px-2.5 py-1.5 text-[11px] font-medium text-[#777] hover:text-[#777] transition-colors"
+          >
+            <svg
+              width="12"
+              height="12"
+              viewBox="0 0 24 24"
+              fill="none"
+              stroke="currentColor"
+              strokeWidth="2"
+              strokeLinecap="round"
+              strokeLinejoin="round"
+            >
+              <circle cx="12" cy="12" r="3" />
+              <path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 1 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 1 1-4 0v-.09a1.65 1.65 0 0 0-1-1.51 1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 1 1-2.83-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 1 1 0-4h.09a1.65 1.65 0 0 0 1.51-1 1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 1 1 2.83-2.83l.06.06a1.65 1.65 0 0 0 1.82.33h.08a1.65 1.65 0 0 0 1-1.51V3a2 2 0 1 1 4 0v.09a1.65 1.65 0 0 0 1 1.51h.08a1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 1 1 2.83 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82v.08a1.65 1.65 0 0 0 1.51 1H21a2 2 0 1 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z" />
+            </svg>
+            Settings
+          </button>
+        </div>
+      )}
+
+      {workspaceView === "design" && versions.length > 1 && (
+        <div className="fixed bottom-6 right-6 z-20">
+          <div className="relative">
+            <select
+              value={activeVersionId ?? ""}
+              onChange={(e) => {
+                const versionId = e.target.value;
+                setActiveVersionId(versionId);
+                const selected = versions.find((v) => v.id === versionId);
+                if (selected?.spec) {
+                  setSimulationTree(selected.spec);
+                  clearSelectedElement();
+                  clearHoveredElement();
+                  setSelectedTarget(null);
+                  setAnnotationPanelPos(null);
+                }
+              }}
+              className="appearance-none min-w-[72px] rounded-[8px] border border-[#f4f4f4] bg-[#f7f7f7] pl-2.5 pr-7 py-1.5 text-[11px] font-medium leading-none text-[#777] outline-none"
+            >
+              {versions.map((version) => (
+                <option key={version.id} value={version.id}>
+                  {version.label}
+                </option>
+              ))}
+            </select>
+            <svg
+              className="pointer-events-none absolute right-2.5 top-1/2 -translate-y-1/2 text-[#777]"
+              width="11"
+              height="11"
+              viewBox="0 0 24 24"
+              fill="none"
+              stroke="currentColor"
+              strokeWidth="2"
+              strokeLinecap="round"
+              strokeLinejoin="round"
+            >
+              <path d="m6 9 6 6 6-6" />
+            </svg>
+          </div>
+        </div>
+      )}
+
+      {workspaceView === "design" &&
+        annotationMode &&
+        annotations.map((item, idx) => (
+          <div
+            key={item.id}
+            data-annotation-ui="true"
+            className="fixed z-20 h-5 min-w-5 px-1 rounded-full bg-[#47C2FF] text-white text-[11px] font-semibold leading-5 text-center shadow-[0_2px_8px_rgba(0,0,0,0.2)]"
+            style={{ top: item.markerTop, left: item.markerLeft }}
+          >
+            {idx + 1}
+          </div>
+        ))}
+
+      {workspaceView === "design" &&
+        annotationMode &&
+        selectedTarget &&
+        annotationPanelPos && (
+          <div
+            data-annotation-ui="true"
+            className="fixed z-20 w-[320px] p-0"
+            style={{
+              top: annotationPanelPos.top,
+              left: annotationPanelPos.left,
+            }}
+          >
+            <div className="w-full border border-[#f4f4f4] rounded-[16px] pl-3 pr-2 py-2 bg-background text-sm min-h-[44px] flex items-center justify-between">
+              <input
+                ref={annotationInputRef}
+                value={annotationInput}
+                onChange={(e) => setAnnotationInput(e.target.value)}
+                onKeyDown={(e) => {
+                  if (e.key === "Enter") {
+                    e.preventDefault();
+                    addAnnotation();
+                  }
+                }}
+                placeholder="Describe the change for this element..."
+                className="flex-1 bg-transparent outline-none font-['Inter'] placeholder:text-muted-foreground/50 text-sm"
+              />
+              <button
+                onClick={addAnnotation}
+                disabled={!selectedTarget || !annotationInput.trim()}
+                className="ml-2 w-7 h-7 rounded-[10px] bg-primary text-primary-foreground flex items-center justify-center hover:bg-primary/90 transition-colors disabled:opacity-30"
+                aria-label="Add annotation"
+              >
+                <svg
+                  width="16"
+                  height="16"
+                  viewBox="0 0 24 24"
+                  fill="none"
+                  stroke="currentColor"
+                  strokeWidth="2"
+                  strokeLinecap="round"
+                  strokeLinejoin="round"
+                >
+                  <path d="M12 19V5" />
+                  <path d="M5 12l7-7 7 7" />
+                </svg>
+              </button>
+            </div>
+          </div>
+        )}
+
+      {showProjectSettingsModal && currentProject && (
+        <div className="fixed inset-0 z-50 bg-black/45 flex items-center justify-center p-4">
+          <div className="w-full max-w-md rounded-[14px] border border-[#f4f4f4] bg-white p-5 shadow-xl">
+            <div className="flex items-start justify-between gap-3">
+              <h2 className="text-sm font-semibold">
+                {currentProject.title || "New component"}&apos;s Settings
+              </h2>
+              <button
+                onClick={() => setShowProjectSettingsModal(false)}
+                className="text-muted-foreground hover:text-foreground transition-colors p-1"
+                aria-label="Close settings"
+              >
+                <svg
+                  width="14"
+                  height="14"
+                  viewBox="0 0 24 24"
+                  fill="none"
+                  stroke="currentColor"
+                  strokeWidth="2"
+                  strokeLinecap="round"
+                  strokeLinejoin="round"
+                >
+                  <path d="M18 6 6 18" />
+                  <path d="m6 6 12 12" />
+                </svg>
+              </button>
+            </div>
+            <div className="mt-4 space-y-3 text-xs text-muted-foreground">
+              <div>
+                <div className="mb-1">Project Name</div>
+                <input
+                  value={projectTitleInput}
+                  onChange={(e) => setProjectTitleInput(e.target.value)}
+                  className="w-full rounded-[10px] border border-[#f4f4f4] bg-white px-3 py-2 text-sm text-foreground outline-none"
+                  placeholder="Project name"
+                />
+              </div>
+              <div>
+                <div className="font-medium text-foreground/90">
+                  Created Date
+                </div>
+                <div>
+                  {new Date(currentProject.created_at).toLocaleString()}
+                </div>
+              </div>
+              <div>
+                <div className="font-medium text-foreground/90">
+                  Last Updated Date
+                </div>
+                <div>
+                  {new Date(currentProject.updated_at).toLocaleString()}
+                </div>
+              </div>
+            </div>
+            <div className="mt-4 flex justify-end">
+              <button
+                onClick={() => void saveProjectTitle()}
+                disabled={isSavingProjectTitle || !projectTitleInput.trim()}
+                className="rounded-[10px] border border-[#f4f4f4] bg-white px-3 py-1.5 text-xs font-medium text-[#777] disabled:opacity-50"
+              >
+                {isSavingProjectTitle ? "Saving..." : "Save"}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
 
       {/* Fullscreen modal */}
       {isFullscreen && (

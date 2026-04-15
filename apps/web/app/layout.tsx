@@ -3,11 +3,8 @@ import localFont from "next/font/local";
 import { GeistPixelSquare } from "geist/font/pixel";
 import "./globals.css";
 import { ThemeProvider } from "@/components/theme-provider";
-import { DocsChat } from "@/components/docs-chat";
 import { Analytics } from "@vercel/analytics/next";
 import { SpeedInsights } from "@vercel/speed-insights/next";
-import { PAGE_TITLES } from "@/lib/page-titles";
-import { cookies } from "next/headers";
 
 const geistSans = localFont({
   src: "./fonts/GeistVF.woff",
@@ -20,12 +17,8 @@ const geistMono = localFont({
 
 export const metadata: Metadata = {
   metadataBase: new URL("https://json-render.dev"),
-  title: {
-    default: `json-render | ${PAGE_TITLES[""]}`,
-    template: "%s | json-render",
-  },
-  description:
-    "The Generative UI framework. Generate dashboards, widgets, and apps from prompts — safely constrained to components you define.",
+  title: "json-render playground",
+  description: "Prompt-to-UI playground",
   keywords: [
     "json-render",
     "generative UI",
@@ -77,28 +70,12 @@ export default async function RootLayout({
 }: Readonly<{
   children: React.ReactNode;
 }>) {
-  const cookieStore = await cookies();
-  const chatOpen = cookieStore.get("docs-chat-open")?.value === "true";
-  const chatWidth = Number(cookieStore.get("docs-chat-width")?.value) || 400;
-
   return (
     <html lang="en" suppressHydrationWarning>
-      <head>
-        {chatOpen && (
-          <style
-            dangerouslySetInnerHTML={{
-              __html: `@media(min-width:640px){body{padding-right:${chatWidth}px}}`,
-            }}
-          />
-        )}
-      </head>
       <body
         className={`${geistSans.variable} ${geistMono.variable} ${GeistPixelSquare.variable}`}
       >
-        <ThemeProvider>
-          {children}
-          <DocsChat defaultOpen={chatOpen} defaultWidth={chatWidth} />
-        </ThemeProvider>
+        <ThemeProvider>{children}</ThemeProvider>
         <Analytics />
         <SpeedInsights />
       </body>

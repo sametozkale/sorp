@@ -1,6 +1,7 @@
 "use client";
 
 import { useState } from "react";
+import type { CSSProperties } from "react";
 import {
   defineRegistry,
   useBoundProp,
@@ -125,9 +126,17 @@ export const { registry, executeAction } = defineRegistry(playgroundCatalog, {
               ? "max-w-md sm:min-w-[360px]"
               : "w-full";
       const centeredClass = props.centered ? "mx-auto" : "";
+      const cardStyle: CSSProperties = {
+        ...(props.backgroundColor
+          ? { backgroundColor: props.backgroundColor }
+          : {}),
+        ...(props.borderColor ? { borderColor: props.borderColor } : {}),
+        ...(props.textColor ? { color: props.textColor } : {}),
+      };
 
       return (
         <div
+          style={cardStyle}
           className={`border border-border rounded-xl p-5 bg-card text-card-foreground shadow-sm overflow-hidden h-full flex flex-col ${maxWidthClass} ${centeredClass}`}
         >
           {(props.title || props.description) && (
@@ -445,10 +454,32 @@ export const { registry, executeAction } = defineRegistry(playgroundCatalog, {
               ? "text-sm font-medium uppercase tracking-wider text-muted-foreground"
               : "text-xl font-semibold tracking-tight";
 
-      if (level === "h1") return <h1 className={headingClass}>{props.text}</h1>;
-      if (level === "h3") return <h3 className={headingClass}>{props.text}</h3>;
-      if (level === "h4") return <h4 className={headingClass}>{props.text}</h4>;
-      return <h2 className={headingClass}>{props.text}</h2>;
+      const headingStyle: CSSProperties = props.color
+        ? { color: props.color }
+        : {};
+      if (level === "h1")
+        return (
+          <h1 style={headingStyle} className={headingClass}>
+            {props.text}
+          </h1>
+        );
+      if (level === "h3")
+        return (
+          <h3 style={headingStyle} className={headingClass}>
+            {props.text}
+          </h3>
+        );
+      if (level === "h4")
+        return (
+          <h4 style={headingStyle} className={headingClass}>
+            {props.text}
+          </h4>
+        );
+      return (
+        <h2 style={headingStyle} className={headingClass}>
+          {props.text}
+        </h2>
+      );
     },
 
     Text: ({ props }) => {
@@ -464,9 +495,23 @@ export const { registry, executeAction } = defineRegistry(playgroundCatalog, {
                 : "text-sm";
 
       if (props.variant === "code") {
-        return <code className={textClass}>{props.text}</code>;
+        return (
+          <code
+            style={props.color ? { color: props.color } : undefined}
+            className={textClass}
+          >
+            {props.text}
+          </code>
+        );
       }
-      return <p className={textClass}>{props.text}</p>;
+      return (
+        <p
+          style={props.color ? { color: props.color } : undefined}
+          className={textClass}
+        >
+          {props.text}
+        </p>
+      );
     },
 
     Image: ({ props }) => (
@@ -563,8 +608,19 @@ export const { registry, executeAction } = defineRegistry(playgroundCatalog, {
               ? "bg-red-500"
               : "";
 
+      const badgeStyle: CSSProperties = {
+        ...(props.backgroundColor
+          ? { backgroundColor: props.backgroundColor }
+          : {}),
+        ...(props.textColor ? { color: props.textColor } : {}),
+        ...(props.borderColor ? { borderColor: props.borderColor } : {}),
+      };
       return (
-        <Badge variant={variant} className={`${customClass} gap-1.5`}>
+        <Badge
+          variant={variant}
+          style={badgeStyle}
+          className={`${customClass} gap-1.5`}
+        >
           {dotColor && (
             <span className={`w-1.5 h-1.5 rounded-full ${dotColor} shrink-0`} />
           )}
@@ -583,6 +639,14 @@ export const { registry, executeAction } = defineRegistry(playgroundCatalog, {
             : props.type === "info"
               ? "border-blue-200 bg-blue-50 text-blue-900 dark:border-blue-800 dark:bg-blue-950 dark:text-blue-100"
               : "";
+
+      const alertStyle: CSSProperties = {
+        ...(props.backgroundColor
+          ? { backgroundColor: props.backgroundColor }
+          : {}),
+        ...(props.textColor ? { color: props.textColor } : {}),
+        ...(props.borderColor ? { borderColor: props.borderColor } : {}),
+      };
 
       const iconProps = {
         width: 16,
@@ -623,7 +687,7 @@ export const { registry, executeAction } = defineRegistry(playgroundCatalog, {
         );
 
       return (
-        <Alert variant={variant} className={customClass}>
+        <Alert variant={variant} style={alertStyle} className={customClass}>
           {icon}
           <AlertTitle>{props.title}</AlertTitle>
           {props.message && (
@@ -847,10 +911,11 @@ export const { registry, executeAction } = defineRegistry(playgroundCatalog, {
                 </div>
                 <div className="w-full flex-1 flex items-end">
                   <div
-                    className={`w-full ${barColors[i % barColors.length]} rounded-t-md transition-all group-hover:opacity-80`}
+                    className={`w-full ${props.color ? "" : barColors[i % barColors.length]} rounded-t-md transition-all group-hover:opacity-80`}
                     style={{
                       height: `${(d.value / maxValue) * 100}%`,
                       minHeight: 4,
+                      ...(props.color ? { backgroundColor: props.color } : {}),
                     }}
                   />
                 </div>
@@ -912,7 +977,10 @@ export const { registry, executeAction } = defineRegistry(playgroundCatalog, {
       const gradientId = `line-gradient-${Math.random().toString(36).slice(2, 8)}`;
 
       return (
-        <div className="space-y-3">
+        <div
+          className="space-y-3"
+          style={props.color ? { color: props.color } : undefined}
+        >
           {props.title && (
             <div className="text-sm font-medium">{props.title}</div>
           )}
@@ -1280,6 +1348,13 @@ export const { registry, executeAction } = defineRegistry(playgroundCatalog, {
         <Button
           variant={variant}
           disabled={props.disabled ?? false}
+          style={{
+            ...(props.backgroundColor
+              ? { backgroundColor: props.backgroundColor }
+              : {}),
+            ...(props.textColor ? { color: props.textColor } : {}),
+            ...(props.borderColor ? { borderColor: props.borderColor } : {}),
+          }}
           onClick={() => emit("press")}
         >
           {props.label}

@@ -1,4 +1,5 @@
 import { streamText } from "ai";
+import { anthropic } from "@ai-sdk/anthropic";
 import { headers } from "next/headers";
 import type { Spec, EditMode } from "@json-render/core";
 import {
@@ -27,7 +28,7 @@ const PLAYGROUND_RULES = [
 ];
 
 const MAX_PROMPT_LENGTH = 500;
-const DEFAULT_MODEL = "anthropic/claude-haiku-4.5";
+const DEFAULT_MODEL = "claude-3-5-haiku-latest";
 
 function getSystemPrompt(isYaml: boolean, editModes?: EditMode[]): string {
   if (isYaml) {
@@ -68,6 +69,20 @@ function buildYamlUserPrompt(
 }
 
 export async function POST(req: Request) {
+  if (!process.env.ANTHROPIC_API_KEY) {
+    return new Response(
+      JSON.stringify({
+        error: "Configuration error",
+        message:
+          "ANTHROPIC_API_KEY is missing. Add it to apps/web/.env.local and restart the dev server.",
+      }),
+      {
+        status: 500,
+        headers: { "Content-Type": "application/json" },
+      },
+    );
+  }
+
   const headersList = await headers();
   const ip = headersList.get("x-forwarded-for")?.split(",")[0] ?? "anonymous";
 
@@ -106,7 +121,7 @@ export async function POST(req: Request) {
       });
 
   const result = streamText({
-    model: process.env.AI_GATEWAY_MODEL || DEFAULT_MODEL,
+    model: anthropic(process.env.ANTHROPIC_MODEL || DEFAULT_MODEL),
     system: [
       {
         role: "system",
