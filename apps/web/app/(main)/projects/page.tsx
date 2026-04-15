@@ -10,6 +10,13 @@ interface ProjectRow {
   updated_at: string;
 }
 
+function isProjectsTableMissing(message: string): boolean {
+  return (
+    message.includes("Could not find the table 'public.projects'") ||
+    message.includes('relation "public.projects" does not exist')
+  );
+}
+
 export default async function ProjectsPage() {
   const hasSupabaseEnv =
     !!process.env.NEXT_PUBLIC_SUPABASE_URL &&
@@ -43,6 +50,18 @@ export default async function ProjectsPage() {
     .order("updated_at", { ascending: false });
 
   if (error) {
+    if (isProjectsTableMissing(error.message)) {
+      return (
+        <section className="max-w-5xl mx-auto px-6 pt-16 pb-16">
+          <div className="rounded-[12px] border border-[#f4f4f4] bg-white p-6 text-sm text-muted-foreground">
+            Supabase tables are not initialized yet.
+            <br />
+            Run the migration for `projects` and `project_versions`, then reload
+            this page.
+          </div>
+        </section>
+      );
+    }
     throw new Error(error.message);
   }
 
