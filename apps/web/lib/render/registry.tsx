@@ -137,7 +137,7 @@ export const { registry, executeAction } = defineRegistry(playgroundCatalog, {
       return (
         <div
           style={cardStyle}
-          className={`border border-border rounded-xl p-5 bg-card text-card-foreground shadow-sm overflow-hidden h-full flex flex-col ${maxWidthClass} ${centeredClass}`}
+          className={`border border-border rounded-2xl p-5 bg-white text-card-foreground shadow-sm flex flex-col ${maxWidthClass} ${centeredClass}`}
         >
           {(props.title || props.description) && (
             <div className="mb-4">
@@ -153,9 +153,7 @@ export const { registry, executeAction } = defineRegistry(playgroundCatalog, {
               )}
             </div>
           )}
-          <div className="flex-1 flex flex-col gap-4 [&>:last-child]:mt-auto">
-            {children}
-          </div>
+          <div className="flex flex-col gap-4">{children}</div>
         </div>
       );
     },
@@ -246,7 +244,7 @@ export const { registry, executeAction } = defineRegistry(playgroundCatalog, {
       <Separator
         orientation={props.orientation ?? "horizontal"}
         className={
-          props.orientation === "vertical" ? "h-full mx-3" : "my-4 opacity-50"
+          props.orientation === "vertical" ? "h-full mx-3" : "opacity-50"
         }
       />
     ),
@@ -559,7 +557,20 @@ export const { registry, executeAction } = defineRegistry(playgroundCatalog, {
                 : props.color === "danger"
                   ? "text-red-600 dark:text-red-400"
                   : "";
-      return <IconComponent size={px} className={`shrink-0 ${colorClass}`} />;
+      const colorStyle: CSSProperties | undefined =
+        props.color &&
+        !["muted", "primary", "success", "warning", "danger"].includes(
+          props.color,
+        )
+          ? { color: props.color }
+          : undefined;
+      return (
+        <IconComponent
+          size={px}
+          className={`jr-icon-node shrink-0 ${colorClass}`}
+          style={colorStyle}
+        />
+      );
     },
 
     Avatar: ({ props }) => {
@@ -706,7 +717,10 @@ export const { registry, executeAction } = defineRegistry(playgroundCatalog, {
               {props.label}
             </Label>
           )}
-          <Progress value={value} />
+          <Progress
+            value={value}
+            className="bg-[#47C2FF]/25 [&_[data-slot=progress-indicator]]:bg-[#47C2FF]"
+          />
         </div>
       );
     },
@@ -977,10 +991,7 @@ export const { registry, executeAction } = defineRegistry(playgroundCatalog, {
       const gradientId = `line-gradient-${Math.random().toString(36).slice(2, 8)}`;
 
       return (
-        <div
-          className="space-y-3"
-          style={props.color ? { color: props.color } : undefined}
-        >
+        <div className="space-y-3" style={{ color: props.color ?? "#47C2FF" }}>
           {props.title && (
             <div className="text-sm font-medium">{props.title}</div>
           )}
@@ -1017,13 +1028,7 @@ export const { registry, executeAction } = defineRegistry(playgroundCatalog, {
                   strokeWidth="1"
                 />
               ))}
-              {areaPath && (
-                <path
-                  d={areaPath}
-                  fill={`url(#${gradientId})`}
-                  className="text-primary"
-                />
-              )}
+              {areaPath && <path d={areaPath} fill={`url(#${gradientId})`} />}
               {smoothPath && (
                 <path
                   d={smoothPath}
@@ -1033,17 +1038,17 @@ export const { registry, executeAction } = defineRegistry(playgroundCatalog, {
                   strokeLinecap="round"
                   strokeLinejoin="round"
                   vectorEffect="non-scaling-stroke"
-                  className="text-primary"
                 />
               )}
             </svg>
             {points.map((p, i) => (
               <div
                 key={i}
-                className="absolute w-[7px] h-[7px] rounded-full bg-primary -translate-x-1/2 -translate-y-1/2"
+                className="absolute w-[7px] h-[7px] rounded-full -translate-x-1/2 -translate-y-1/2"
                 style={{
                   left: `${(p.x / width) * 100}%`,
                   top: `${(p.y / height) * 100}%`,
+                  backgroundColor: props.color ?? "#47C2FF",
                 }}
               />
             ))}

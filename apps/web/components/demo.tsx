@@ -2,6 +2,7 @@
 
 import React, {
   useEffect,
+  useLayoutEffect,
   useState,
   useCallback,
   useRef,
@@ -15,6 +16,7 @@ import { toast } from "sonner";
 import { CodeBlock } from "./code-block";
 import { CopyButton } from "./copy-button";
 import { Toaster } from "./ui/sonner";
+import { BrandLoading } from "./brand-loading";
 import { PlaygroundRenderer } from "@/lib/render/renderer";
 import { playgroundCatalog } from "@/lib/render/catalog";
 import { buildCatalogDisplayData } from "@/lib/render/catalog-display";
@@ -158,8 +160,7 @@ const SIMULATION_STAGES: SimulationStage[] = [
 
 type Mode = "simulation" | "interactive";
 type Phase = "typing" | "streaming" | "complete";
-type Tab = "stream" | "json" | "nested" | "catalog";
-type RenderView = "dynamic" | "static";
+type Tab = "staticCode" | "stream" | "json" | "nested" | "catalog";
 type WorkspaceView = "design" | "code";
 
 interface DemoProps {
@@ -174,6 +175,7 @@ interface AnnotationItem {
   note: string;
   markerTop: number;
   markerLeft: number;
+  anchorPath: string;
 }
 
 interface AnnotationPanelPos {
@@ -228,15 +230,6 @@ function validateAnnotationOnlyChanges(
     };
   }
 
-  const baseKeys = Object.keys(baseSpec.elements).sort();
-  const nextKeys = Object.keys(nextSpec.elements).sort();
-  if (JSON.stringify(baseKeys) !== JSON.stringify(nextKeys)) {
-    return {
-      valid: false,
-      reason: "Annotation mode cannot add or remove elements.",
-    };
-  }
-
   if (
     JSON.stringify(normalizeForComparison(baseSpec.state ?? {})) !==
     JSON.stringify(normalizeForComparison(nextSpec.state ?? {}))
@@ -247,39 +240,15 @@ function validateAnnotationOnlyChanges(
     };
   }
 
-  let hasPropChange = false;
+  const baseKeys = Object.keys(baseSpec.elements).sort();
+  const nextKeys = Object.keys(nextSpec.elements).sort();
+  const sharedKeys = baseKeys.filter((key) => nextSpec.elements[key]);
 
-  for (const key of baseKeys) {
+  // Keep behavior-safe constraints only on shared elements.
+  for (const key of sharedKeys) {
     const baseEl = baseSpec.elements[key];
     const nextEl = nextSpec.elements[key];
     if (!baseEl || !nextEl) continue;
-
-    if (baseEl.type !== nextEl.type) {
-      return {
-        valid: false,
-        reason: "Annotation mode cannot change component types.",
-      };
-    }
-
-    if (
-      JSON.stringify(normalizeForComparison(baseEl.children ?? [])) !==
-      JSON.stringify(normalizeForComparison(nextEl.children ?? []))
-    ) {
-      return {
-        valid: false,
-        reason: "Annotation mode cannot change component hierarchy.",
-      };
-    }
-
-    if (
-      JSON.stringify(normalizeForComparison(baseEl.visible ?? null)) !==
-      JSON.stringify(normalizeForComparison(nextEl.visible ?? null))
-    ) {
-      return {
-        valid: false,
-        reason: "Annotation mode cannot change visibility rules.",
-      };
-    }
 
     if (
       JSON.stringify(normalizeForComparison(baseEl.on ?? null)) !==
@@ -300,23 +269,398 @@ function validateAnnotationOnlyChanges(
         reason: "Annotation mode cannot change repeat bindings.",
       };
     }
-
-    if (
-      JSON.stringify(normalizeForComparison(baseEl.props ?? {})) !==
-      JSON.stringify(normalizeForComparison(nextEl.props ?? {}))
-    ) {
-      hasPropChange = true;
-    }
   }
 
-  if (!hasPropChange) {
+  if (
+    JSON.stringify(normalizeForComparison(baseSpec.elements)) ===
+    JSON.stringify(normalizeForComparison(nextSpec.elements))
+  ) {
     return {
       valid: false,
-      reason: "No annotation changes were applied to component props.",
+      reason: "No annotation changes were applied.",
     };
   }
 
   return { valid: true };
+}
+
+function collectPropChanges(baseSpec: Spec, nextSpec: Spec): string[] {
+  const changedKeys: string[] = [];
+  const keys = Object.keys(baseSpec.elements);
+  for (const key of keys) {
+    const baseEl = baseSpec.elements[key];
+    const nextEl = nextSpec.elements[key];
+    if (!baseEl || !nextEl) continue;
+    if (
+      JSON.stringify(normalizeForComparison(baseEl.props ?? {})) !==
+      JSON.stringify(normalizeForComparison(nextEl.props ?? {}))
+    ) {
+      changedKeys.push(key);
+    }
+  }
+  return changedKeys;
+}
+
+function validateAnnotationIntentApplied(
+  annotations: AnnotationItem[],
+  baseSpec: Spec,
+  nextSpec: Spec,
+): { valid: boolean; reason?: string } {
+  const changedKeys = collectPropChanges(baseSpec, nextSpec);
+  if (changedKeys.length === 0) {
+    return { valid: false, reason: "No prop changes were detected." };
+  }
+
+  const hasSquareIntent = annotations.some((a) => {
+    const note = a.note.toLowerCase();
+    return (
+      (note.includes("square") || note.includes("kare")) &&
+      (note.includes("size") ||
+        note.includes("boyut") ||
+        note.includes("width") ||
+        note.includes("height") ||
+        note.includes("1x1") ||
+        note.includes("1 x 1"))
+    );
+  });
+
+  if (hasSquareIntent) {
+    const hasAppliedSquareChange = changedKeys.some((key) => {
+      const beforeProps = (baseSpec.elements[key]?.props ?? {}) as Record<
+        string,
+        unknown
+      >;
+      const afterProps = (nextSpec.elements[key]?.props ?? {}) as Record<
+        string,
+        unknown
+      >;
+      const width = afterProps.width;
+      const height = afterProps.height;
+      const size = afterProps.size;
+
+      const widthHeightEqual =
+        (typeof width === "number" &&
+          typeof height === "number" &&
+          width === height) ||
+        (typeof width === "string" &&
+          typeof height === "string" &&
+          width === height);
+
+      const sizeBecameSquare =
+        size !== undefined &&
+        JSON.stringify(normalizeForComparison(beforeProps.size ?? null)) !==
+          JSON.stringify(normalizeForComparison(size));
+
+      return widthHeightEqual || sizeBecameSquare;
+    });
+
+    if (!hasAppliedSquareChange) {
+      return {
+        valid: false,
+        reason:
+          "Square-size annotation was not applied (width/height did not become equal).",
+      };
+    }
+  }
+
+  return { valid: true };
+}
+
+function extractRequestedColor(note: string): string | null {
+  const hex = note.match(/#(?:[0-9a-fA-F]{3}|[0-9a-fA-F]{6}|[0-9a-fA-F]{8})\b/);
+  if (hex?.[0]) return hex[0];
+
+  const rgb = note.match(
+    /rgba?\(\s*\d{1,3}\s*,\s*\d{1,3}\s*,\s*\d{1,3}(?:\s*,\s*(?:0|1|0?\.\d+))?\s*\)/i,
+  );
+  if (rgb?.[0]) return rgb[0];
+
+  const hsl = note.match(
+    /hsla?\(\s*\d{1,3}(?:\.\d+)?(?:deg)?\s*,\s*\d{1,3}%\s*,\s*\d{1,3}%(?:\s*,\s*(?:0|1|0?\.\d+))?\s*\)/i,
+  );
+  if (hsl?.[0]) return hsl[0];
+
+  const named = note.match(
+    /\b(white|black|red|blue|green|yellow|orange|purple|pink|gray|grey|teal|cyan)\b/i,
+  );
+  return named?.[0] ?? null;
+}
+
+function isIconColorAnnotation(annotation: AnnotationItem): boolean {
+  const note = annotation.note.toLowerCase();
+  const target = (annotation.target || "").toLowerCase();
+  const requestedColor = extractRequestedColor(annotation.note);
+  const asksColor =
+    note.includes("color") ||
+    note.includes("colour") ||
+    note.includes("renk") ||
+    !!requestedColor;
+  const asksIcon =
+    note.includes("icon") ||
+    note.includes("ikon") ||
+    target.includes("icon") ||
+    target.startsWith("svg");
+  return asksColor && asksIcon && !!requestedColor;
+}
+
+function getSpecKeysByTypeInRenderOrder(spec: Spec, type: string): string[] {
+  const ordered: string[] = [];
+  const visited = new Set<string>();
+
+  const walk = (key: string) => {
+    if (!key || visited.has(key)) return;
+    visited.add(key);
+    const element = spec.elements[key];
+    if (!element) return;
+    if (element.type === type) ordered.push(key);
+    for (const child of element.children ?? []) {
+      walk(child);
+    }
+  };
+
+  walk(spec.root);
+  return ordered;
+}
+
+function enforceScopedIconColorChanges(
+  baseSpec: Spec,
+  nextSpec: Spec,
+  annotations: AnnotationItem[],
+  targetedIconIndices: Map<string, number>,
+): Spec {
+  if (annotations.length === 0 || targetedIconIndices.size === 0)
+    return nextSpec;
+
+  const next = JSON.parse(JSON.stringify(nextSpec)) as Spec;
+  const baseIconKeys = getSpecKeysByTypeInRenderOrder(baseSpec, "Icon");
+  const nextIconKeys = getSpecKeysByTypeInRenderOrder(next, "Icon");
+  const allowed = new Map<number, string>();
+
+  for (const annotation of annotations) {
+    if (!isIconColorAnnotation(annotation)) continue;
+    const index = targetedIconIndices.get(annotation.id);
+    const requestedColor = extractRequestedColor(annotation.note);
+    if (
+      typeof index === "number" &&
+      index >= 0 &&
+      requestedColor &&
+      index < nextIconKeys.length
+    ) {
+      allowed.set(index, requestedColor);
+    }
+  }
+
+  if (allowed.size === 0) return next;
+  // #region agent log
+  fetch("http://127.0.0.1:7419/ingest/9745bc9e-b9a9-4725-b8b6-7ec3cc99174f", {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json",
+      "X-Debug-Session-Id": "dd379c",
+    },
+    body: JSON.stringify({
+      sessionId: "dd379c",
+      runId: "run-scope-check",
+      hypothesisId: "H1",
+      location: "components/demo.tsx:enforceScopedIconColorChanges:allowed",
+      message: "Allowed icon indices resolved for scoped color enforcement",
+      data: {
+        allowedEntries: Array.from(allowed.entries()),
+        baseIconCount: baseIconKeys.length,
+        nextIconCount: nextIconKeys.length,
+      },
+      timestamp: Date.now(),
+    }),
+  }).catch(() => {});
+  // #endregion
+
+  for (let i = 0; i < nextIconKeys.length; i += 1) {
+    const nextKey = nextIconKeys[i];
+    if (!nextKey || !next.elements[nextKey]) continue;
+    const nextElement = next.elements[nextKey];
+    if (!nextElement) continue;
+
+    if (allowed.has(i)) {
+      nextElement.props = {
+        ...(nextElement.props ?? {}),
+        color: allowed.get(i),
+      };
+      continue;
+    }
+
+    const baseKey = baseIconKeys[i];
+    const baseElement = baseKey ? baseSpec.elements[baseKey] : undefined;
+    const baseColor = baseElement?.props?.color;
+    const nextProps = { ...(nextElement.props ?? {}) } as Record<
+      string,
+      unknown
+    >;
+    if (baseColor === undefined || baseColor === null) {
+      delete nextProps.color;
+    } else {
+      nextProps.color = baseColor;
+    }
+    nextElement.props = nextProps;
+  }
+
+  const changedIconIndices: number[] = [];
+  const max = Math.min(baseIconKeys.length, nextIconKeys.length);
+  for (let i = 0; i < max; i += 1) {
+    const baseKey = baseIconKeys[i];
+    const nextKey = nextIconKeys[i];
+    const baseColor = baseKey
+      ? baseSpec.elements[baseKey]?.props?.color
+      : undefined;
+    const nextColor = nextKey
+      ? next.elements[nextKey]?.props?.color
+      : undefined;
+    if (JSON.stringify(baseColor) !== JSON.stringify(nextColor)) {
+      changedIconIndices.push(i);
+    }
+  }
+  // #region agent log
+  fetch("http://127.0.0.1:7419/ingest/9745bc9e-b9a9-4725-b8b6-7ec3cc99174f", {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json",
+      "X-Debug-Session-Id": "dd379c",
+    },
+    body: JSON.stringify({
+      sessionId: "dd379c",
+      runId: "run-scope-check",
+      hypothesisId: "H2",
+      location: "components/demo.tsx:enforceScopedIconColorChanges:result",
+      message: "Scoped icon enforcement diff summary",
+      data: { changedIconIndices },
+      timestamp: Date.now(),
+    }),
+  }).catch(() => {});
+  // #endregion
+
+  return next;
+}
+
+function applyAnnotationFallbackChanges(
+  baseSpec: Spec,
+  annotations: AnnotationItem[],
+  targetedIconIndices?: Map<string, number>,
+): Spec | null {
+  const cloned = JSON.parse(JSON.stringify(baseSpec)) as Spec;
+  let changed = false;
+  const iconKeys = getSpecKeysByTypeInRenderOrder(cloned, "Icon");
+
+  for (const annotation of annotations) {
+    const note = annotation.note.toLowerCase();
+    const requestedColor = extractRequestedColor(annotation.note);
+    const asksColor =
+      note.includes("color") ||
+      note.includes("renk") ||
+      note.includes("colour") ||
+      !!requestedColor;
+    const targetHint = (annotation.target || "").toLowerCase();
+    const asksIcon =
+      note.includes("icon") ||
+      note.includes("ikon") ||
+      targetHint.includes("icon") ||
+      targetHint.startsWith("svg");
+
+    if (asksColor && requestedColor) {
+      if (asksIcon) {
+        const targetedIndex = targetedIconIndices?.get(annotation.id);
+        const iconKey =
+          typeof targetedIndex === "number" && targetedIndex >= 0
+            ? iconKeys[targetedIndex]
+            : undefined;
+        if (iconKey && cloned.elements[iconKey]) {
+          cloned.elements[iconKey].props = {
+            ...(cloned.elements[iconKey].props ?? {}),
+            color: requestedColor,
+          };
+          changed = true;
+          continue;
+        }
+      }
+
+      const textLikeKey = Object.keys(cloned.elements).find((key) =>
+        ["Text", "Heading", "Badge", "Button", "Alert", "Card"].includes(
+          cloned.elements[key]?.type ?? "",
+        ),
+      );
+      if (textLikeKey && cloned.elements[textLikeKey]) {
+        const element = cloned.elements[textLikeKey];
+        if (!element) continue;
+        const nextProps = { ...(element.props ?? {}) } as Record<
+          string,
+          unknown
+        >;
+        if (element.type === "Text" || element.type === "Heading") {
+          nextProps.color = requestedColor;
+        } else if (element.type === "Badge" || element.type === "Button") {
+          nextProps.textColor = requestedColor;
+        } else if (element.type === "Alert" || element.type === "Card") {
+          nextProps.textColor = requestedColor;
+        } else {
+          nextProps.color = requestedColor;
+        }
+        element.props = nextProps;
+        changed = true;
+      }
+    }
+  }
+
+  const equivalent = areSpecsEquivalent(baseSpec, cloned);
+  if (!changed) return null;
+  return equivalent ? null : cloned;
+}
+
+function buildElementPathWithin(
+  container: HTMLElement,
+  element: HTMLElement,
+): string | null {
+  const segments: string[] = [];
+  let current: HTMLElement | null = element;
+
+  while (current && current !== container) {
+    const parent: HTMLElement | null = current.parentElement;
+    if (!parent) return null;
+    const index = Array.from(parent.children).indexOf(current);
+    if (index < 0) return null;
+    segments.push(`:nth-child(${index + 1})`);
+    current = parent;
+  }
+
+  if (current !== container) return null;
+  const relativePath = segments.reverse().join(" > ");
+  return relativePath ? `:scope > ${relativePath}` : ":scope";
+}
+
+function resolveElementByPath(
+  container: HTMLElement,
+  path: string,
+): HTMLElement | null {
+  if (!path) return null;
+  try {
+    return container.querySelector(path) as HTMLElement | null;
+  } catch {
+    return null;
+  }
+}
+
+function getAnnotationMarkerPosition(
+  anchor: HTMLElement,
+  surface: HTMLElement | null,
+): { top: number; left: number } {
+  if (surface && surface.contains(anchor)) {
+    const surfaceRect = surface.getBoundingClientRect();
+    const anchorRect = anchor.getBoundingClientRect();
+    return {
+      top: anchorRect.top - surfaceRect.top - 10,
+      left: anchorRect.left - surfaceRect.left - 10,
+    };
+  }
+
+  const rect = anchor.getBoundingClientRect();
+  return { top: rect.top - 10, left: rect.left - 10 };
 }
 
 function deriveProjectTitleFromSpec(spec: Spec): string | null {
@@ -420,8 +764,7 @@ export function Demo({
   const [userPrompt, setUserPrompt] = useState("");
   const [stageIndex, setStageIndex] = useState(-1);
   const [streamLines, setStreamLines] = useState<string[]>([]);
-  const [activeTab, setActiveTab] = useState<Tab>("json");
-  const [renderView, setRenderView] = useState<RenderView>("dynamic");
+  const [activeTab, setActiveTab] = useState<Tab>("staticCode");
   const [workspaceView, setWorkspaceView] = useState<WorkspaceView>("design");
   const [annotationMode, setAnnotationMode] = useState(false);
   const [annotations, setAnnotations] = useState<AnnotationItem[]>([]);
@@ -441,6 +784,7 @@ export function Demo({
   const [isLoadingProject, setIsLoadingProject] = useState(true);
   const [isPersistingVersion, setIsPersistingVersion] = useState(false);
   const [showProjectMenu, setShowProjectMenu] = useState(false);
+  const [showVersionMenu, setShowVersionMenu] = useState(false);
   const [showProjectSettingsModal, setShowProjectSettingsModal] =
     useState(false);
   const [projectTitleInput, setProjectTitleInput] = useState("");
@@ -456,17 +800,28 @@ export function Demo({
   const [collapsedFolders, setCollapsedFolders] = useState<Set<string>>(
     new Set(),
   );
+  const [zoomMultiplier, setZoomMultiplier] = useState(1);
+  const [autoFitScale, setAutoFitScale] = useState(1);
+  const [isZoomEditing, setIsZoomEditing] = useState(false);
+  const [zoomInputValue, setZoomInputValue] = useState("");
   const inputRef = useRef<HTMLInputElement>(null);
   const annotationInputRef = useRef<HTMLInputElement>(null);
+  const zoomInputRef = useRef<HTMLInputElement>(null);
   const renderSurfaceRef = useRef<HTMLDivElement>(null);
+  const renderViewportRef = useRef<HTMLDivElement>(null);
+  const renderContentRef = useRef<HTMLDivElement>(null);
   const hoveredElementRef = useRef<HTMLElement | null>(null);
   const selectedElementRef = useRef<HTMLElement | null>(null);
+  const annotationAnchorElementsRef = useRef<Map<string, HTMLElement>>(
+    new Map(),
+  );
   const latestApiSpecRef = useRef<Spec | null>(null);
   const [catalogSection, setCatalogSection] = useState<
     "components" | "actions"
   >("components");
   const [examplePrompts, setExamplePrompts] = useState(EXAMPLE_PROMPT_POOL);
   const projectMenuRef = useRef<HTMLDivElement>(null);
+  const versionMenuRef = useRef<HTMLDivElement>(null);
 
   // Catalog data for the catalog tab
   const catalogData = useMemo(
@@ -488,19 +843,11 @@ export function Demo({
       const target = incomingProjectId ?? resolvedProjectId;
       setIsLoadingProject(true);
 
-      let effectiveProjectId = target ?? null;
-      if (!effectiveProjectId || effectiveProjectId === "new") {
-        const { data: created, error: createError } = await supabase
-          .from("projects")
-          .insert({ title: "New component" })
-          .select("id,title,created_at,updated_at")
-          .single();
-        if (createError || !created)
-          throw createError || new Error("Failed to create project.");
-        effectiveProjectId = created.id;
-        setResolvedProjectId(created.id);
-        setCurrentProject(created as ProjectEntry);
-        router.replace(`/projects/${created.id}`);
+      const effectiveProjectId = target ?? null;
+      if (!effectiveProjectId) {
+        setIsLoadingProject(false);
+        router.replace("/projects");
+        return;
       }
 
       const { data: project, error: projectError } = await supabase
@@ -597,6 +944,18 @@ export function Demo({
     return () => document.removeEventListener("mousedown", onClick);
   }, [showProjectMenu]);
 
+  useEffect(() => {
+    if (!showVersionMenu) return;
+    const onClick = (event: MouseEvent) => {
+      const target = event.target as Node | null;
+      if (!target) return;
+      if (versionMenuRef.current?.contains(target)) return;
+      setShowVersionMenu(false);
+    };
+    document.addEventListener("mousedown", onClick);
+    return () => document.removeEventListener("mousedown", onClick);
+  }, [showVersionMenu]);
+
   // Use the library's useUIStream hook for real API calls
   const {
     spec: apiSpec,
@@ -615,12 +974,26 @@ export function Demo({
   const currentSimulationStage =
     stageIndex >= 0 ? SIMULATION_STAGES[stageIndex] : null;
 
-  // Determine which tree to display - keep simulation tree until new API response
+  const selectedVersionSpec = useMemo(
+    () =>
+      versions.find((v) => v.id === activeVersionId)?.spec ?? simulationTree,
+    [activeVersionId, simulationTree, versions],
+  );
+
+  // Determine which tree to display:
+  // - Simulation mode uses staged simulation tree
+  // - Interactive mode uses selected version spec as source of truth
+  // - API spec is only shown while streaming a new generation
   const currentTree =
     mode === "simulation"
       ? currentSimulationStage?.tree || simulationTree
-      : apiSpec || simulationTree;
+      : isStreaming
+        ? apiSpec || selectedVersionSpec
+        : selectedVersionSpec || apiSpec;
   const showExamplePrompts = !(currentTree && currentTree.root);
+  const promptPlaceholder = currentTree?.root
+    ? "Describe your revision..."
+    : "Describe what you want to build...";
   const clearSelectedElement = useCallback(() => {
     if (selectedElementRef.current) {
       selectedElementRef.current.classList.remove("annotation-selected-target");
@@ -639,11 +1012,16 @@ export function Demo({
     (event: React.MouseEvent<HTMLDivElement>) => {
       if (!annotationMode) return;
       const host = renderSurfaceRef.current;
-      if (!host) return;
+      const content = renderContentRef.current;
+      if (!host || !content) return;
 
       const target = event.target as HTMLElement | null;
       if (!target) return;
       if (target.closest("[data-annotation-ui='true']")) {
+        clearHoveredElement();
+        return;
+      }
+      if (!content.contains(target)) {
         clearHoveredElement();
         return;
       }
@@ -652,6 +1030,7 @@ export function Demo({
       if (
         !picked ||
         !host.contains(picked) ||
+        !content.contains(picked) ||
         picked === selectedElementRef.current
       ) {
         clearHoveredElement();
@@ -670,13 +1049,16 @@ export function Demo({
     (event: React.MouseEvent<HTMLDivElement>) => {
       if (!annotationMode) return;
       const host = renderSurfaceRef.current;
-      if (!host) return;
+      const content = renderContentRef.current;
+      if (!host || !content) return;
       const target = event.target as HTMLElement | null;
       if (!target) return;
       if (target.closest("[data-annotation-ui='true']")) return;
+      if (!content.contains(target)) return;
 
       const picked = target.closest("*") as HTMLElement | null;
-      if (!picked || !host.contains(picked)) return;
+      if (!picked || !host.contains(picked) || !content.contains(picked))
+        return;
 
       clearSelectedElement();
       clearHoveredElement();
@@ -709,21 +1091,123 @@ export function Demo({
   const addAnnotation = useCallback(() => {
     if (!selectedTarget || !annotationInput.trim()) return;
     const note = annotationInput.trim();
-    const rect = selectedElementRef.current?.getBoundingClientRect();
-    const markerTop = Math.max(8, (rect?.top ?? 40) - 10);
-    const markerLeft = Math.max(8, (rect?.left ?? 40) - 10);
+    const selectedElement = selectedElementRef.current;
+    const host = renderSurfaceRef.current;
+    const content = renderContentRef.current;
+    const anchorPath =
+      selectedElement && content && content.contains(selectedElement)
+        ? (buildElementPathWithin(content, selectedElement) ?? "")
+        : "";
+    const markerPosition = selectedElement
+      ? getAnnotationMarkerPosition(selectedElement, host)
+      : { top: 30, left: 30 };
+    const annotationId = `${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
+    if (selectedElement) {
+      annotationAnchorElementsRef.current.set(annotationId, selectedElement);
+    }
     setAnnotations((prev) => [
       ...prev,
       {
-        id: `${Date.now()}-${prev.length + 1}`,
+        id: annotationId,
         target: selectedTarget,
         note,
-        markerTop,
-        markerLeft,
+        markerTop: markerPosition.top,
+        markerLeft: markerPosition.left,
+        anchorPath,
       },
     ]);
     setAnnotationInput("");
   }, [annotationInput, selectedTarget]);
+
+  useEffect(() => {
+    if (!annotationMode || annotations.length === 0) return;
+    const host = renderSurfaceRef.current;
+    const content = renderContentRef.current;
+    if (!host || !content) return;
+    let frameId = 0;
+
+    const recalculateMarkerPositions = () => {
+      setAnnotations((prev) => {
+        let changed = false;
+        const next = prev.map((item) => {
+          const cachedAnchor = annotationAnchorElementsRef.current.get(item.id);
+          let anchor: HTMLElement | null =
+            cachedAnchor &&
+            cachedAnchor.isConnected &&
+            content.contains(cachedAnchor)
+              ? cachedAnchor
+              : null;
+          if (!anchor) {
+            anchor = resolveElementByPath(content, item.anchorPath);
+            if (anchor) {
+              annotationAnchorElementsRef.current.set(item.id, anchor);
+            }
+          }
+          if (!anchor) return item;
+          const markerPosition = getAnnotationMarkerPosition(anchor, host);
+          const markerTop = markerPosition.top;
+          const markerLeft = markerPosition.left;
+          if (
+            Math.abs(markerTop - item.markerTop) < 0.5 &&
+            Math.abs(markerLeft - item.markerLeft) < 0.5
+          ) {
+            return item;
+          }
+          changed = true;
+          return { ...item, markerTop, markerLeft };
+        });
+        return changed ? next : prev;
+      });
+    };
+
+    const tick = () => {
+      recalculateMarkerPositions();
+      frameId = window.requestAnimationFrame(tick);
+    };
+
+    recalculateMarkerPositions();
+    frameId = window.requestAnimationFrame(tick);
+    window.addEventListener("resize", recalculateMarkerPositions);
+    window.addEventListener("scroll", recalculateMarkerPositions, true);
+    return () => {
+      window.cancelAnimationFrame(frameId);
+      window.removeEventListener("resize", recalculateMarkerPositions);
+      window.removeEventListener("scroll", recalculateMarkerPositions, true);
+    };
+  }, [
+    annotationMode,
+    annotations.length,
+    currentTree?.root,
+    zoomMultiplier,
+    autoFitScale,
+  ]);
+
+  const zoomOut = useCallback(() => {
+    setZoomMultiplier((prev) => Math.max(0.5, Number((prev - 0.1).toFixed(2))));
+  }, []);
+
+  const zoomIn = useCallback(() => {
+    setZoomMultiplier((prev) => Math.min(2, Number((prev + 0.1).toFixed(2))));
+  }, []);
+
+  const resetZoom = useCallback(() => {
+    setZoomMultiplier(1);
+  }, []);
+
+  const applyCustomZoomPercent = useCallback(() => {
+    const parsed = Number(zoomInputValue);
+    if (!Number.isFinite(parsed)) {
+      setIsZoomEditing(false);
+      return;
+    }
+    const clampedPercent = Math.max(30, Math.min(100, Math.round(parsed)));
+    const targetScale = clampedPercent / 100;
+    const nextMultiplier = targetScale / Math.max(autoFitScale, 0.01);
+    setZoomMultiplier(
+      Math.max(0.2, Math.min(6, Number(nextMultiplier.toFixed(3)))),
+    );
+    setIsZoomEditing(false);
+  }, [autoFitScale, zoomInputValue]);
 
   const saveAsNextVersion = useCallback(
     async (spec: Spec): Promise<boolean> => {
@@ -851,7 +1335,8 @@ export function Demo({
       const forceChangePrompt = [
         prompt,
         "",
-        "IMPORTANT: Your output must include at least one concrete visual/style change versus previousSpec.",
+        "IMPORTANT: Your output must include at least one concrete change versus previousSpec.",
+        "A valid change can be a prop/style update, or an element add/remove when requested.",
         "Do not return the same spec.",
       ].join("\n");
       await send(forceChangePrompt, { previousSpec: baseSpec });
@@ -870,6 +1355,60 @@ export function Demo({
       isPersistingVersion
     )
       return;
+    // Hide annotation input panel immediately after starting version creation,
+    // while keeping numbered markers visible until the new version is finalized.
+    setSelectedTarget(null);
+    setAnnotationInput("");
+    setAnnotationPanelPos(null);
+    clearSelectedElement();
+    clearHoveredElement();
+
+    const targetedIconIndices = new Map<string, number>();
+    const contentRoot = renderContentRef.current;
+    if (contentRoot) {
+      const allLucideSvgs = Array.from(
+        contentRoot.querySelectorAll<Element>("svg.jr-icon-node"),
+      );
+      for (const annotation of annotations) {
+        if (!annotation.anchorPath || !isIconColorAnnotation(annotation))
+          continue;
+        const anchor = resolveElementByPath(contentRoot, annotation.anchorPath);
+        if (!anchor) continue;
+        const svgTarget = anchor.matches("svg.jr-icon-node")
+          ? (anchor as Element)
+          : anchor.closest("svg.jr-icon-node");
+        if (!svgTarget) continue;
+        const index = allLucideSvgs.indexOf(svgTarget);
+        if (index >= 0) {
+          targetedIconIndices.set(annotation.id, index);
+        }
+      }
+    }
+    // #region agent log
+    fetch("http://127.0.0.1:7419/ingest/9745bc9e-b9a9-4725-b8b6-7ec3cc99174f", {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        "X-Debug-Session-Id": "dd379c",
+      },
+      body: JSON.stringify({
+        sessionId: "dd379c",
+        runId: "run-scope-check",
+        hypothesisId: "H3",
+        location: "components/demo.tsx:createVersionFromAnnotations:target-map",
+        message: "Computed targeted icon index map from annotation anchors",
+        data: {
+          annotationCount: annotations.length,
+          targetedEntries: Array.from(targetedIconIndices.entries()),
+          iconColorAnnotationIds: annotations
+            .filter((annotation) => isIconColorAnnotation(annotation))
+            .map((annotation) => annotation.id),
+        },
+        timestamp: Date.now(),
+      }),
+    }).catch(() => {});
+    // #endregion
+
     const instructions = annotations
       .map((a, index) => `${index + 1}. Target ${a.target}: ${a.note}`)
       .join("\n");
@@ -877,38 +1416,121 @@ export function Demo({
       "Apply these visual annotations to the current UI.",
       "STRICT RULES:",
       "- Change ONLY what is explicitly requested in annotations.",
-      "- Do NOT add, remove, or reorder elements.",
-      "- Do NOT change component types, state, bindings, events, or visibility logic.",
-      "- Only update props on existing elements that are directly related to the requested edits.",
+      "- You MAY add or remove elements if the annotation explicitly requires it.",
+      "- Keep root element stable.",
+      "- Do NOT change state, bindings, events, or repeat logic.",
+      "- Keep edits minimal and directly related to the annotation text.",
       "",
       instructions,
     ].join("\n");
     setIsCreatingVersion(true);
     try {
-      const produced = await requestChangedSpec(prompt, currentTree);
+      let produced = await requestChangedSpec(prompt, currentTree);
+      if (produced?.root && areSpecsEquivalent(produced, currentTree)) {
+        const retryPrompt = [
+          prompt,
+          "",
+          "IMPORTANT RETRY:",
+          "- Your previous output was identical to the current spec.",
+          "- You MUST apply at least one concrete change based on the annotations.",
+          "- A valid change can be prop update, element add, or element removal (if requested).",
+          "- Keep all strict rules and avoid unrelated edits.",
+        ].join("\n");
+        produced = await requestChangedSpec(retryPrompt, currentTree);
+      }
       if (!produced?.root) {
         toast.error("Could not create a new version. Please try again.");
         return;
       }
       if (areSpecsEquivalent(produced, currentTree)) {
-        toast.error("No changes were applied. Try a more specific annotation.");
-        return;
+        const fallbackSpec = applyAnnotationFallbackChanges(
+          currentTree,
+          annotations,
+          targetedIconIndices,
+        );
+        if (
+          fallbackSpec?.root &&
+          !areSpecsEquivalent(fallbackSpec, currentTree)
+        ) {
+          produced = fallbackSpec;
+          toast("Applied annotation fallback changes. Review the new version.");
+        } else {
+          toast.error(
+            "No changes were applied. Try a more specific annotation.",
+          );
+          return;
+        }
       }
+      produced = enforceScopedIconColorChanges(
+        currentTree,
+        produced,
+        annotations,
+        targetedIconIndices,
+      );
+      // #region agent log
+      fetch(
+        "http://127.0.0.1:7419/ingest/9745bc9e-b9a9-4725-b8b6-7ec3cc99174f",
+        {
+          method: "POST",
+          headers: {
+            "Content-Type": "application/json",
+            "X-Debug-Session-Id": "dd379c",
+          },
+          body: JSON.stringify({
+            sessionId: "dd379c",
+            runId: "run-scope-check",
+            hypothesisId: "H4",
+            location:
+              "components/demo.tsx:createVersionFromAnnotations:post-enforce-equivalence",
+            message: "Equivalence status after scoped icon enforcement",
+            data: {
+              equivalentAfterEnforce: areSpecsEquivalent(currentTree, produced),
+            },
+            timestamp: Date.now(),
+          }),
+        },
+      ).catch(() => {});
+      // #endregion
       const annotationValidation = validateAnnotationOnlyChanges(
         currentTree,
         produced,
       );
       if (!annotationValidation.valid) {
-        toast.error(
-          annotationValidation.reason ||
-            "Annotation update changed more than requested.",
+        const reason = annotationValidation.reason || "";
+        const structuralButApplicable =
+          reason.includes("cannot add or remove elements") ||
+          reason.includes("cannot change component hierarchy");
+        const hasPropChanges =
+          collectPropChanges(currentTree, produced).length > 0;
+
+        if (structuralButApplicable && hasPropChanges) {
+          toast(
+            "Annotation may include minor structural updates. Saved because prop changes were applied.",
+          );
+        } else {
+          toast.error(
+            annotationValidation.reason ||
+              "Annotation update changed more than requested.",
+          );
+          return;
+        }
+      }
+      const annotationIntentValidation = validateAnnotationIntentApplied(
+        annotations,
+        currentTree,
+        produced,
+      );
+      if (!annotationIntentValidation.valid) {
+        toast(
+          annotationIntentValidation.reason ||
+            "Annotation intent may be partially applied. Review the new version.",
         );
-        return;
       }
       if (produced?.root) {
         const saved = await saveAsNextVersion(produced);
         if (saved) {
           setAnnotations([]);
+          annotationAnchorElementsRef.current.clear();
           setAnnotationInput("");
           setSelectedTarget(null);
           setAnnotationPanelPos(null);
@@ -945,6 +1567,56 @@ export function Demo({
   useEffect(() => {
     latestApiSpecRef.current = apiSpec;
   }, [apiSpec]);
+
+  useLayoutEffect(() => {
+    const viewport = renderViewportRef.current;
+    const content = renderContentRef.current;
+    if (!viewport || !content) return;
+
+    const recalculateFit = () => {
+      const viewportWidth = Math.max(0, viewport.clientWidth - 24);
+      const reservedBottomSpace = fullscreen ? 16 : 96;
+      const viewportHeight = Math.max(
+        0,
+        viewport.clientHeight - 24 - reservedBottomSpace,
+      );
+      const contentWidth = content.scrollWidth;
+      const contentHeight = content.scrollHeight;
+
+      if (!contentWidth || !contentHeight || !currentTree?.root) {
+        setAutoFitScale(1);
+        return;
+      }
+
+      const widthScale = viewportWidth / contentWidth;
+      const heightScale = viewportHeight / contentHeight;
+      const fit = Math.min(1, widthScale, heightScale);
+      setAutoFitScale(Number.isFinite(fit) && fit > 0 ? fit : 1);
+    };
+
+    recalculateFit();
+    const resizeObserver = new ResizeObserver(recalculateFit);
+    resizeObserver.observe(viewport);
+    resizeObserver.observe(content);
+    window.addEventListener("resize", recalculateFit);
+    return () => {
+      resizeObserver.disconnect();
+      window.removeEventListener("resize", recalculateFit);
+    };
+  }, [currentTree?.root, currentTree, workspaceView]);
+
+  useEffect(() => {
+    if (!isZoomEditing) return;
+    zoomInputRef.current?.focus();
+    zoomInputRef.current?.select();
+  }, [isZoomEditing]);
+
+  useEffect(() => {
+    // Always start each newly shown component/version from best-fit zoom.
+    // User can then adjust manually with zoom controls.
+    setZoomMultiplier(1);
+    setIsZoomEditing(false);
+  }, [activeVersionId, resolvedProjectId]);
 
   const stopGeneration = useCallback(() => {
     if (mode === "simulation") {
@@ -1010,11 +1682,10 @@ export function Demo({
 
   const handleSubmit = useCallback(async () => {
     if (!userPrompt.trim() || isStreaming || isPersistingVersion) return;
+    const prompt = userPrompt.trim();
+    setUserPrompt("");
     setStreamLines([]);
-    const produced = await requestChangedSpec(
-      userPrompt,
-      currentTree ?? undefined,
-    );
+    const produced = await requestChangedSpec(prompt, currentTree ?? undefined);
     if (!produced?.root) {
       toast.error("Could not generate a new version. Please try again.");
       return;
@@ -1641,6 +2312,18 @@ Open [http://localhost:3000](http://localhost:3000) to view.
   const isTypingSimulation = mode === "simulation" && phase === "typing";
   const isStreamingSimulation = mode === "simulation" && phase === "streaming";
   const showLoadingDots = isStreamingSimulation || isStreaming;
+  const otherProjects = allProjects.filter(
+    (project) => project.id !== currentProject?.id,
+  );
+  const fullscreenProjectTitle = (() => {
+    const raw = (currentProject?.title || "New component").trim();
+    if (!raw) return "New component";
+    return raw.charAt(0).toUpperCase() + raw.slice(1);
+  })();
+  const effectiveScale = Math.max(
+    0.2,
+    Math.min(2.5, autoFitScale * zoomMultiplier),
+  );
 
   const handleExampleClick = useCallback((prompt: string) => {
     setMode("interactive");
@@ -1656,13 +2339,7 @@ Open [http://localhost:3000](http://localhost:3000) to view.
   }, []);
 
   if (isLoadingProject) {
-    return (
-      <div className="w-full max-w-5xl mx-auto pb-36">
-        <div className="h-[36rem] rounded-[16px] border border-[#f4f4f4] bg-white flex items-center justify-center text-sm text-muted-foreground">
-          Loading project...
-        </div>
-      </div>
-    );
+    return <BrandLoading label="Project loading..." />;
   }
 
   return (
@@ -1688,7 +2365,7 @@ Open [http://localhost:3000](http://localhost:3000) to view.
                 onClick={() => handleExampleClick(prompt)}
                 className={`${
                   fullscreen ? "px-3 py-1.5" : "px-2 py-1"
-                } text-xs rounded-full border border-[#f4f4f4] text-muted-foreground hover:text-foreground hover:border-[#f4f4f4] transition-colors`}
+                } max-w-full truncate whitespace-nowrap text-xs rounded-full border border-[#f4f4f4] text-muted-foreground hover:text-foreground hover:border-[#f4f4f4] transition-colors`}
               >
                 {prompt}
               </button>
@@ -1730,7 +2407,7 @@ Open [http://localhost:3000](http://localhost:3000) to view.
                 type="text"
                 value={userPrompt}
                 onChange={(e) => setUserPrompt(e.target.value)}
-                placeholder="Describe what you want to build..."
+                placeholder={promptPlaceholder}
                 className="flex-1 bg-transparent outline-none font-['Inter'] placeholder:text-muted-foreground/50 placeholder:font-['Inter'] text-sm"
                 disabled={isStreaming}
                 maxLength={140}
@@ -1743,7 +2420,7 @@ Open [http://localhost:3000](http://localhost:3000) to view.
                 e.stopPropagation();
                 stopGeneration();
               }}
-              className="ml-2 w-7 h-7 rounded-full bg-primary text-primary-foreground flex items-center justify-center hover:bg-primary/90 transition-colors"
+              className="ml-2 btn-primary btn-primary-icon"
               aria-label="Stop"
             >
               <svg
@@ -1753,7 +2430,7 @@ Open [http://localhost:3000](http://localhost:3000) to view.
                 fill="currentColor"
                 stroke="none"
               >
-                <rect x="6" y="6" width="12" height="12" />
+                <rect x="6" y="6" width="12" height="12" rx="2" />
               </svg>
             </button>
           ) : (
@@ -1763,7 +2440,7 @@ Open [http://localhost:3000](http://localhost:3000) to view.
                 handleSubmit();
               }}
               disabled={!userPrompt.trim() || isPersistingVersion}
-              className="ml-2 w-7 h-7 rounded-[10px] bg-primary text-primary-foreground flex items-center justify-center hover:bg-primary/90 transition-colors disabled:opacity-30"
+              className="ml-2 btn-primary btn-primary-icon disabled:opacity-30"
               aria-label="Submit"
             >
               <svg
@@ -1784,10 +2461,13 @@ Open [http://localhost:3000](http://localhost:3000) to view.
         </div>
       </div>
 
-      <div className="fixed top-4 left-6 z-30" ref={projectMenuRef}>
+      <div
+        className="fixed top-4 left-6 z-30 inline-block"
+        ref={projectMenuRef}
+      >
         <button
           onClick={() => setShowProjectMenu((prev) => !prev)}
-          className="inline-flex items-center gap-1.5 rounded-[10px] border border-[#f4f4f4] bg-background/90 px-3 py-1.5 text-xs font-medium text-[#777] backdrop-blur-sm"
+          className="inline-flex h-[34px] items-center gap-1.5 rounded-[10px] border border-[#f4f4f4] bg-background/90 px-3 py-1.5 text-xs font-medium text-[#777] backdrop-blur-sm"
         >
           <svg
             width="16"
@@ -1864,7 +2544,7 @@ Open [http://localhost:3000](http://localhost:3000) to view.
               </clipPath>
             </defs>
           </svg>
-          <span className="mx-2">/</span>
+          <span className="mx-1 text-[#ccc]">/</span>
           <span>{currentProject?.title || "New component"}</span>
           <svg
             width="12"
@@ -1880,32 +2560,45 @@ Open [http://localhost:3000](http://localhost:3000) to view.
           </svg>
         </button>
         {showProjectMenu ? (
-          <div className="mt-2 min-w-[220px] rounded-[12px] border border-[#f4f4f4] bg-white p-1.5 shadow-[0_6px_18px_rgba(0,0,0,0.08)]">
+          <div className="absolute left-0 top-full mt-2 w-max min-w-[220px] max-w-[360px] rounded-[12px] border border-[#f4f4f4] bg-white p-1.5 shadow-[0_6px_18px_rgba(0,0,0,0.08)]">
             <button
               onClick={() => {
                 setShowProjectMenu(false);
                 router.push("/projects");
               }}
-              className="w-full text-left rounded-[8px] px-2 py-1.5 text-xs font-medium text-[#777] hover:bg-[#f7f7f7]"
+              className="w-full inline-flex items-center gap-1.5 text-left rounded-[8px] px-2 py-1.5 text-xs font-medium text-[#777] hover:bg-[#f7f7f7]"
             >
+              <svg
+                width="12"
+                height="12"
+                viewBox="0 0 24 24"
+                fill="none"
+                stroke="currentColor"
+                strokeWidth="2"
+                strokeLinecap="round"
+                strokeLinejoin="round"
+                aria-hidden="true"
+              >
+                <path d="m15 18-6-6 6-6" />
+              </svg>
               Back to projects
             </button>
-            <div className="my-1 h-px bg-[#f4f4f4]" />
+            {otherProjects.length > 0 ? (
+              <div className="my-1 h-px bg-[#f4f4f4]" />
+            ) : null}
             <div className="max-h-52 overflow-auto">
-              {allProjects
-                .filter((project) => project.id !== currentProject?.id)
-                .map((project) => (
-                  <button
-                    key={project.id}
-                    onClick={() => {
-                      setShowProjectMenu(false);
-                      router.push(`/projects/${project.id}`);
-                    }}
-                    className="w-full text-left rounded-[8px] px-2 py-1.5 text-xs text-[#777] hover:bg-[#f7f7f7]"
-                  >
-                    {project.title || "New component"}
-                  </button>
-                ))}
+              {otherProjects.map((project) => (
+                <button
+                  key={project.id}
+                  onClick={() => {
+                    setShowProjectMenu(false);
+                    router.push(`/projects/${project.id}`);
+                  }}
+                  className="w-full text-left rounded-[8px] px-2 py-1.5 text-xs text-[#777] hover:bg-[#f7f7f7]"
+                >
+                  {project.title || "New component"}
+                </button>
+              ))}
             </div>
           </div>
         ) : null}
@@ -1943,7 +2636,7 @@ Open [http://localhost:3000](http://localhost:3000) to view.
               }
               setAnnotationMode((prev) => !prev);
             }}
-            className={`inline-flex items-center gap-1.5 rounded-[10px] border px-3 py-1.5 text-xs font-medium transition-colors ${
+            className={`inline-flex h-[34px] items-center gap-1.5 rounded-[10px] border px-3 py-1.5 text-xs font-medium transition-colors ${
               annotationMode && annotations.length > 0
                 ? "border-[#f4f4f4] bg-white text-[#22D3BB] shadow-[0_1px_3px_rgba(0,0,0,0.09)]"
                 : annotationMode
@@ -2002,17 +2695,25 @@ Open [http://localhost:3000](http://localhost:3000) to view.
         >
           <div className="mb-2 flex justify-center shrink-0">
             <div className="inline-flex items-center rounded-[10px] border border-[#f4f4f4] bg-[#f7f7f7] p-0.5">
-              {(["json", "nested", "stream", "catalog"] as const).map((tab) => (
+              {(
+                [
+                  { key: "staticCode", label: "Static Code" },
+                  { key: "json", label: "json" },
+                  { key: "nested", label: "nested" },
+                  { key: "stream", label: "stream" },
+                  { key: "catalog", label: "catalog" },
+                ] as const
+              ).map(({ key, label }) => (
                 <button
-                  key={tab}
-                  onClick={() => setActiveTab(tab)}
+                  key={key}
+                  onClick={() => setActiveTab(key)}
                   className={`rounded-[8px] border px-3 py-1 text-[11px] font-medium transition-colors ${
-                    activeTab === tab
+                    activeTab === key
                       ? "border-[#f8f8f8] bg-white text-foreground shadow-[0_1px_2px_rgba(0,0,0,0.06)]"
                       : "border-transparent text-muted-foreground hover:text-foreground"
                   }`}
                 >
-                  {tab}
+                  {label}
                 </button>
               ))}
             </div>
@@ -2024,16 +2725,23 @@ Open [http://localhost:3000](http://localhost:3000) to view.
               <div className="absolute top-2 right-2 z-10">
                 <CopyButton
                   text={
-                    activeTab === "stream"
-                      ? streamLines.join("\n")
-                      : activeTab === "nested"
-                        ? nestedCode
-                        : jsonCode
+                    activeTab === "staticCode"
+                      ? generatedCode
+                      : activeTab === "stream"
+                        ? streamLines.join("\n")
+                        : activeTab === "nested"
+                          ? nestedCode
+                          : jsonCode
                   }
                   className="opacity-0 group-hover:opacity-100 text-muted-foreground"
                 />
               </div>
             )}
+            <div
+              className={`overflow-auto p-6 ${activeTab === "staticCode" ? "" : "hidden"}`}
+            >
+              <CodeBlock code={generatedCode} lang="tsx" hideCopyButton />
+            </div>
             <div
               className={`overflow-auto p-6 ${activeTab === "stream" ? "" : "hidden"}`}
             >
@@ -2198,72 +2906,132 @@ Open [http://localhost:3000](http://localhost:3000) to view.
           }`}
         >
           <div
-            className={`shrink-0 ${
-              currentTree?.root
-                ? "fixed left-1/2 -translate-x-1/2 bottom-[calc(1.5rem+44px+16px)] z-20 flex justify-center"
-                : "mb-2 flex justify-center"
-            }`}
+            className={`rounded bg-background grid relative group ${fullscreen ? "flex-1 min-h-0" : "h-[calc(100vh-9rem)] min-h-[32rem]"}`}
           >
-            <div className="inline-flex items-center rounded-[10px] border border-[#f4f4f4] bg-[#f7f7f7] p-0.5">
-              {(
-                [
-                  { key: "dynamic", label: "Live Render" },
-                  { key: "static", label: "Static Code" },
-                ] as const
-              ).map(({ key, label }) => (
-                <button
-                  key={key}
-                  onClick={() => setRenderView(key)}
-                  className={`rounded-[8px] border px-3 py-1 text-[11px] font-medium transition-colors ${
-                    renderView === key
-                      ? "border-[#f8f8f8] bg-white text-foreground shadow-[0_1px_2px_rgba(0,0,0,0.06)]"
-                      : "border-transparent text-muted-foreground hover:text-foreground"
+            <div
+              ref={(node) => {
+                renderViewportRef.current = node;
+                renderSurfaceRef.current = node;
+              }}
+              onClickCapture={handleRenderSurfaceClick}
+              onMouseMoveCapture={handleRenderSurfaceMouseMove}
+              onMouseLeave={clearHoveredElement}
+              className={`${annotationMode ? "cursor-crosshair" : ""} relative overflow-hidden`}
+            >
+              {currentTree && currentTree.root ? (
+                <div
+                  className={`animate-in fade-in duration-200 w-full h-full box-border flex justify-center p-3 ${
+                    autoFitScale < 0.999 ? "items-start pt-4" : "items-center"
                   }`}
                 >
-                  {label}
-                </button>
-              ))}
-            </div>
-          </div>
-          <div
-            className={`rounded bg-background grid relative group ${fullscreen ? "flex-1 min-h-0" : "h-[36rem]"}`}
-          >
-            {renderView === "dynamic" ? (
-              <div
-                ref={renderSurfaceRef}
-                onClickCapture={handleRenderSurfaceClick}
-                onMouseMoveCapture={handleRenderSurfaceMouseMove}
-                onMouseLeave={clearHoveredElement}
-                className={`overflow-auto ${annotationMode ? "cursor-crosshair" : ""}`}
-              >
-                {currentTree && currentTree.root ? (
-                  <div className="animate-in fade-in duration-200 w-full h-full box-border flex items-center justify-center px-3 pt-4 pb-28">
+                  <div
+                    ref={renderContentRef}
+                    style={{
+                      zoom: effectiveScale,
+                    }}
+                  >
                     <PlaygroundRenderer
                       spec={currentTree}
                       loading={isStreaming || isStreamingSimulation}
                     />
                   </div>
-                ) : (
-                  <div className="h-full flex items-center justify-center text-muted-foreground/50 text-sm">
-                    {isStreaming ? "generating..." : "waiting..."}
-                  </div>
-                )}
-              </div>
-            ) : (
-              <div className="h-full overflow-auto p-6">
-                <div className="mx-auto w-fit max-w-full">
-                  <div className="relative rounded-[16px] border border-[#f4f4f4] bg-background p-6 font-mono text-xs text-left">
-                    <div className="absolute top-3 right-3 z-10">
-                      <CopyButton
-                        text={generatedCode}
-                        className="text-muted-foreground"
-                      />
-                    </div>
-                    <CodeBlock code={generatedCode} lang="tsx" hideCopyButton />
+                </div>
+              ) : isStreaming || isStreamingSimulation ? (
+                <div className="h-full flex items-center justify-center">
+                  <div className="inline-flex items-center gap-2 text-sm font-medium text-[#777]">
+                    <svg
+                      width="16"
+                      height="16"
+                      viewBox="0 0 40 40"
+                      fill="none"
+                      xmlns="http://www.w3.org/2000/svg"
+                      aria-hidden="true"
+                      className="shrink-0"
+                    >
+                      <g clipPath="url(#generating-logo-clip)">
+                        <rect
+                          x="15.6024"
+                          y="15.6002"
+                          width="8.79518"
+                          height="8.79518"
+                          rx="1.93976"
+                          fill="#22D3BB"
+                          stroke="#22D3BB"
+                          strokeWidth="0.120482"
+                        />
+                        <path
+                          d="M10.9156 0.0605469H15.8317C16.9028 0.0607377 17.7709 0.928819 17.7711 2V8.85547H10.9156C9.84435 8.85528 8.9762 7.98703 8.9762 6.91602V2C8.9762 0.928701 9.84435 0.0605473 10.9156 0.0605469Z"
+                          fill="#22D3BB"
+                          stroke="#22D3BB"
+                          strokeWidth="0.120482"
+                        />
+                        <path
+                          d="M2 8.9762H8.85547V15.8317C8.85528 16.9027 7.98703 17.7709 6.91602 17.7711H2C0.928819 17.7711 0.0607375 16.9028 0.0605469 15.8317V10.9156C0.0605473 9.84435 0.928701 8.9762 2 8.9762Z"
+                          fill="#22D3BB"
+                          stroke="#22D3BB"
+                          strokeWidth="0.120482"
+                        />
+                        <path
+                          d="M38.0004 8.9762C39.0715 8.97639 39.9398 9.84447 39.9398 10.9156V15.8317C39.9396 16.9027 39.0714 17.7709 38.0004 17.7711H33.0844C32.0132 17.7711 31.1451 16.9028 31.1449 15.8317V8.9762H38.0004Z"
+                          fill="#22D3BB"
+                          stroke="#22D3BB"
+                          strokeWidth="0.120482"
+                        />
+                        <path
+                          d="M33.0844 22.1405H38.0004C39.0715 22.1407 39.9398 23.0088 39.9398 24.08V28.996C39.9396 30.067 39.0714 30.9353 38.0004 30.9355H31.1449V24.08C31.1449 23.0087 32.0131 22.1405 33.0844 22.1405Z"
+                          fill="#22D3BB"
+                          stroke="#22D3BB"
+                          strokeWidth="0.120482"
+                        />
+                        <path
+                          d="M24.1687 31.0605H31.0242V37.916C31.024 38.987 30.1558 39.8553 29.0847 39.8555H24.1687C23.0976 39.8555 22.2295 38.9872 22.2293 37.916V33C22.2293 31.9287 23.0974 31.0605 24.1687 31.0605Z"
+                          fill="#22D3BB"
+                          stroke="#22D3BB"
+                          strokeWidth="0.120482"
+                        />
+                        <path
+                          d="M15.8317 31.0605C16.9028 31.0607 17.7711 31.9288 17.7711 33V37.916C17.771 38.987 16.9027 39.8553 15.8317 39.8555H10.9157C9.8445 39.8555 8.97642 38.9872 8.97623 37.916V31.0605H15.8317Z"
+                          fill="#22D3BB"
+                          stroke="#22D3BB"
+                          strokeWidth="0.120482"
+                        />
+                        <path
+                          d="M2 22.1405H6.91602C7.98715 22.1407 8.85547 23.0088 8.85547 24.08V30.9355H2C0.928819 30.9355 0.0607375 30.0671 0.0605469 28.996V24.08C0.0605473 23.0087 0.928701 22.1405 2 22.1405Z"
+                          fill="#22D3BB"
+                          stroke="#22D3BB"
+                          strokeWidth="0.120482"
+                        />
+                        <path
+                          d="M24.1687 0.0605469H29.0847C30.1559 0.060738 31.0242 0.928819 31.0242 2V8.85547H24.1687C23.0976 8.85547 22.2295 7.98715 22.2293 6.91602V2C22.2293 0.928701 23.0974 0.0605469 24.1687 0.0605469Z"
+                          fill="#22D3BB"
+                          stroke="#22D3BB"
+                          strokeWidth="0.120482"
+                        />
+                      </g>
+                      <defs>
+                        <clipPath id="generating-logo-clip">
+                          <rect width="40" height="40" fill="white" />
+                        </clipPath>
+                      </defs>
+                    </svg>
+                    <span>Generating...</span>
                   </div>
                 </div>
-              </div>
-            )}
+              ) : (
+                <div className="h-full" />
+              )}
+              {annotationMode &&
+                annotations.map((item, idx) => (
+                  <div
+                    key={item.id}
+                    data-annotation-ui="true"
+                    className="absolute z-20 h-5 min-w-5 px-1 rounded-full bg-[#47C2FF] text-white text-[11px] font-semibold leading-5 text-center shadow-[0_2px_8px_rgba(0,0,0,0.2)] pointer-events-none"
+                    style={{ top: item.markerTop, left: item.markerLeft }}
+                  >
+                    {idx + 1}
+                  </div>
+                ))}
+            </div>
           </div>
           <Toaster position="bottom-right" />
         </div>
@@ -2274,7 +3042,7 @@ Open [http://localhost:3000](http://localhost:3000) to view.
           <button
             onClick={() => setShowExportModal(true)}
             disabled={!currentTree?.root}
-            className="inline-flex items-center gap-1.5 rounded-[10px] border border-[#f4f4f4] bg-white px-2.5 py-1.5 text-[11px] font-medium text-[#777] hover:text-[#777] transition-colors disabled:opacity-40 disabled:cursor-not-allowed"
+            className="inline-flex h-7 items-center gap-1.5 rounded-[10px] border border-[#f4f4f4] bg-white px-2.5 text-[11px] font-medium text-[#777] hover:text-[#777] transition-colors disabled:opacity-40 disabled:cursor-not-allowed"
             title="Export as Next.js project"
           >
             <svg
@@ -2295,7 +3063,7 @@ Open [http://localhost:3000](http://localhost:3000) to view.
           </button>
           <button
             onClick={() => setIsFullscreen(true)}
-            className="inline-flex items-center gap-1.5 rounded-[10px] border border-[#f4f4f4] bg-white px-2.5 py-1.5 text-[11px] font-medium text-[#777] hover:text-[#777] transition-colors"
+            className="inline-flex h-7 items-center gap-1.5 rounded-[10px] border border-[#f4f4f4] bg-white px-2.5 text-[11px] font-medium text-[#777] hover:text-[#777] transition-colors"
             aria-label="Maximize"
           >
             <svg
@@ -2317,7 +3085,7 @@ Open [http://localhost:3000](http://localhost:3000) to view.
           </button>
           <button
             onClick={() => setShowProjectSettingsModal(true)}
-            className="inline-flex items-center gap-1.5 rounded-[10px] border border-[#f4f4f4] bg-white px-2.5 py-1.5 text-[11px] font-medium text-[#777] hover:text-[#777] transition-colors"
+            className="inline-flex h-7 items-center gap-1.5 rounded-[10px] border border-[#f4f4f4] bg-white px-2.5 text-[11px] font-medium text-[#777] hover:text-[#777] transition-colors"
           >
             <svg
               width="12"
@@ -2338,59 +3106,138 @@ Open [http://localhost:3000](http://localhost:3000) to view.
       )}
 
       {workspaceView === "design" && versions.length > 1 && (
-        <div className="fixed bottom-6 right-6 z-20">
-          <div className="relative">
-            <select
-              value={activeVersionId ?? ""}
-              onChange={(e) => {
-                const versionId = e.target.value;
-                setActiveVersionId(versionId);
-                const selected = versions.find((v) => v.id === versionId);
-                if (selected?.spec) {
-                  setSimulationTree(selected.spec);
-                  clearSelectedElement();
-                  clearHoveredElement();
-                  setSelectedTarget(null);
-                  setAnnotationPanelPos(null);
-                }
-              }}
-              className="appearance-none min-w-[72px] rounded-[8px] border border-[#f4f4f4] bg-[#f7f7f7] pl-2.5 pr-7 py-1.5 text-[11px] font-medium leading-none text-[#777] outline-none"
+        <div className="fixed right-6 bottom-[calc(1.5rem+28px+8px)] z-20">
+          <div className="relative" ref={versionMenuRef}>
+            <button
+              onClick={() => setShowVersionMenu((prev) => !prev)}
+              className="inline-flex h-7 w-[56px] items-center justify-center gap-2 rounded-[8px] border border-[#f4f4f4] bg-[#f7f7f7] px-2 text-[11px] font-medium leading-none text-[#777]"
+              aria-label="Select version"
             >
-              {versions.map((version) => (
-                <option key={version.id} value={version.id}>
-                  {version.label}
-                </option>
-              ))}
-            </select>
-            <svg
-              className="pointer-events-none absolute right-2.5 top-1/2 -translate-y-1/2 text-[#777]"
-              width="11"
-              height="11"
-              viewBox="0 0 24 24"
-              fill="none"
-              stroke="currentColor"
-              strokeWidth="2"
-              strokeLinecap="round"
-              strokeLinejoin="round"
-            >
-              <path d="m6 9 6 6 6-6" />
-            </svg>
+              <span>
+                {versions.find((v) => v.id === activeVersionId)?.label ||
+                  versions[versions.length - 1]?.label}
+              </span>
+              <svg
+                width="11"
+                height="11"
+                viewBox="0 0 24 24"
+                fill="none"
+                stroke="currentColor"
+                strokeWidth="2"
+                strokeLinecap="round"
+                strokeLinejoin="round"
+              >
+                <path d="m6 9 6 6 6-6" />
+              </svg>
+            </button>
+            {showVersionMenu ? (
+              <div className="absolute right-0 bottom-full mb-1 min-w-[72px] rounded-[8px] border border-[#f4f4f4] bg-[#f7f7f7] p-1 shadow-[0_6px_18px_rgba(0,0,0,0.08)]">
+                {versions.map((version) => (
+                  <button
+                    key={version.id}
+                    onClick={() => {
+                      setShowVersionMenu(false);
+                      setActiveVersionId(version.id);
+                      if (version.spec) {
+                        setSimulationTree(version.spec);
+                        clearSelectedElement();
+                        clearHoveredElement();
+                        setSelectedTarget(null);
+                        setAnnotationPanelPos(null);
+                      }
+                    }}
+                    className={`w-full rounded-[6px] px-2 py-1 text-left text-[11px] font-medium ${
+                      activeVersionId === version.id
+                        ? "bg-white text-foreground"
+                        : "text-[#777] hover:bg-white/70"
+                    }`}
+                  >
+                    {version.label}
+                  </button>
+                ))}
+              </div>
+            ) : null}
           </div>
         </div>
       )}
 
-      {workspaceView === "design" &&
-        annotationMode &&
-        annotations.map((item, idx) => (
-          <div
-            key={item.id}
-            data-annotation-ui="true"
-            className="fixed z-20 h-5 min-w-5 px-1 rounded-full bg-[#47C2FF] text-white text-[11px] font-semibold leading-5 text-center shadow-[0_2px_8px_rgba(0,0,0,0.2)]"
-            style={{ top: item.markerTop, left: item.markerLeft }}
-          >
-            {idx + 1}
+      {workspaceView === "design" && currentTree?.root && (
+        <div className="fixed right-6 bottom-6 z-20">
+          <div className="inline-flex h-7 items-center rounded-[8px] border border-[#f4f4f4] bg-[#f7f7f7] p-0.5 text-[#777]">
+            <button
+              onClick={zoomOut}
+              className="inline-flex h-6 w-6 items-center justify-center rounded-[6px] hover:bg-white/80"
+              aria-label="Zoom out"
+            >
+              <svg
+                width="11"
+                height="11"
+                viewBox="0 0 24 24"
+                fill="none"
+                stroke="currentColor"
+                strokeWidth="2"
+                strokeLinecap="round"
+                strokeLinejoin="round"
+              >
+                <path d="M5 12h14" />
+              </svg>
+            </button>
+            {isZoomEditing ? (
+              <input
+                ref={zoomInputRef}
+                type="number"
+                min={30}
+                max={100}
+                value={zoomInputValue}
+                onChange={(e) => setZoomInputValue(e.target.value)}
+                onBlur={applyCustomZoomPercent}
+                onKeyDown={(e) => {
+                  if (e.key === "Enter") {
+                    e.preventDefault();
+                    applyCustomZoomPercent();
+                  }
+                  if (e.key === "Escape") {
+                    e.preventDefault();
+                    setIsZoomEditing(false);
+                  }
+                }}
+                className="w-[44px] rounded-[6px] px-1 py-1 text-[10px] font-medium bg-white/80 text-center outline-none [appearance:textfield] [&::-webkit-outer-spin-button]:appearance-none [&::-webkit-inner-spin-button]:appearance-none"
+                aria-label="Custom zoom percent"
+              />
+            ) : (
+              <button
+                onClick={() => {
+                  setZoomInputValue(String(Math.round(effectiveScale * 100)));
+                  setIsZoomEditing(true);
+                }}
+                className="min-w-[44px] rounded-[6px] px-1.5 py-1 text-[10px] font-medium hover:bg-white/80"
+                title="Click to set custom zoom (30-100)"
+              >
+                {Math.round(effectiveScale * 100)}%
+              </button>
+            )}
+            <button
+              onClick={zoomIn}
+              className="inline-flex h-6 w-6 items-center justify-center rounded-[6px] hover:bg-white/80"
+              aria-label="Zoom in"
+            >
+              <svg
+                width="11"
+                height="11"
+                viewBox="0 0 24 24"
+                fill="none"
+                stroke="currentColor"
+                strokeWidth="2"
+                strokeLinecap="round"
+                strokeLinejoin="round"
+              >
+                <path d="M12 5v14" />
+                <path d="M5 12h14" />
+              </svg>
+            </button>
           </div>
-        ))}
+        </div>
+      )}
 
       {workspaceView === "design" &&
         annotationMode &&
@@ -2421,7 +3268,7 @@ Open [http://localhost:3000](http://localhost:3000) to view.
               <button
                 onClick={addAnnotation}
                 disabled={!selectedTarget || !annotationInput.trim()}
-                className="ml-2 w-7 h-7 rounded-[10px] bg-primary text-primary-foreground flex items-center justify-center hover:bg-primary/90 transition-colors disabled:opacity-30"
+                className="ml-2 btn-primary btn-primary-icon disabled:opacity-30"
                 aria-label="Add annotation"
               >
                 <svg
@@ -2512,16 +3359,16 @@ Open [http://localhost:3000](http://localhost:3000) to view.
       {/* Fullscreen modal */}
       {isFullscreen && (
         <div className="fixed inset-0 z-50 bg-background flex flex-col">
-          <div className="flex items-center justify-between px-6 h-14 border-b border-border">
-            <div className="text-sm font-mono">render</div>
+          <div className="flex items-center justify-between px-6 h-11 border-b border-border">
+            <div className="text-sm font-medium">{fullscreenProjectTitle}</div>
             <button
               onClick={() => setIsFullscreen(false)}
-              className="text-muted-foreground hover:text-foreground transition-colors p-1"
+              className="text-muted-foreground hover:text-foreground transition-colors p-0.5"
               aria-label="Close"
             >
               <svg
-                width="20"
-                height="20"
+                width="16"
+                height="16"
                 viewBox="0 0 24 24"
                 fill="none"
                 stroke="currentColor"

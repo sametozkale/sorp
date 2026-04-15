@@ -126,6 +126,101 @@ button {
   cursor: pointer;
 }
 
+@layer components {
+  .btn-primary {
+    --btn-inner-radius: 9px;
+    position: relative;
+    isolation: isolate;
+    overflow: hidden;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    gap: 6px;
+    height: 34px;
+    padding: 0 16px;
+    border-radius: 10px;
+    color: #ffffff;
+    border: 0;
+    background: #22d3bb;
+    font-family: var(--primary-font, var(--font-geist-sans), system-ui, sans-serif);
+    font-style: normal;
+    font-weight: 500;
+    font-size: 13px;
+    line-height: normal;
+    letter-spacing: 0.13px;
+    font-feature-settings:
+      "salt" 1,
+      "ss01" 1,
+      "ss02" 1,
+      "ss03" 1,
+      "ss04" 1,
+      "cv01" 1,
+      "cv02" 1,
+      "cv03" 1,
+      "cv04" 1,
+      "cv05" 1,
+      "cv06" 1,
+      "cv07" 1,
+      "cv08" 1,
+      "cv09" 1,
+      "cv10" 1,
+      "cv11" 1;
+    transition:
+      filter 160ms ease,
+      box-shadow 160ms ease;
+  }
+
+  .btn-primary::before {
+    content: "";
+    position: absolute;
+    inset: 1px;
+    border-radius: var(--btn-inner-radius);
+    border: 1px solid rgba(255, 255, 255, 0.12);
+    background: linear-gradient(180deg, #25ddc4 0%, #22d3bb 100%);
+    box-shadow: 0 3px 8px 0 rgba(0, 0, 0, 0.15);
+    z-index: -1;
+    pointer-events: none;
+  }
+
+  .btn-primary:hover:not(:disabled) {
+    filter: none;
+  }
+
+  .btn-primary:hover:not(:disabled)::before {
+    background: linear-gradient(180deg, #2ae4ca 0%, #24d9c0 100%);
+  }
+
+  .btn-primary:active:not(:disabled) {
+    filter: none;
+  }
+
+  .btn-primary:active:not(:disabled)::before {
+    background: linear-gradient(180deg, #23cfb7 0%, #21c8b1 100%);
+  }
+
+  .btn-primary:disabled {
+    opacity: 0.6;
+    cursor: not-allowed;
+  }
+
+  .btn-primary-lg {
+    --btn-inner-radius: 11px;
+    height: 40px;
+    border-radius: 12px;
+  }
+
+  .btn-primary-icon {
+    --btn-inner-radius: 9px;
+    width: 28px;
+    height: 28px;
+    padding: 0;
+    border-radius: 10px;
+    gap: 0;
+    line-height: 0;
+    letter-spacing: 0;
+  }
+}
+
 /* Tool call shimmer animation */
 @keyframes tool-shimmer {
   0% { opacity: 0.5; }

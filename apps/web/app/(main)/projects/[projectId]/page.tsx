@@ -16,7 +16,7 @@ export default async function ProjectDetailPage({
     <section className="max-w-5xl mx-auto px-6 pt-24 pb-16 text-center">
       <div className="w-full text-left max-w-5xl mx-auto">
         {hasSupabaseEnv ? (
-          <Demo projectId={projectId} />
+          <Demo projectId={projectId} skipSimulation />
         ) : (
           <div className="rounded-[12px] border border-[#f4f4f4] bg-white p-6 text-sm text-muted-foreground">
             Missing `NEXT_PUBLIC_SUPABASE_URL` and/or

@@ -188,9 +188,7 @@ export const playgroundCatalog = defineCatalog(schema, {
       props: z.object({
         name: z.string(),
         size: z.enum(["sm", "md", "lg"]).nullable(),
-        color: z
-          .enum(["default", "muted", "primary", "success", "warning", "danger"])
-          .nullable(),
+        color: z.string().nullable(),
       }),
       description:
         "Lucide icon by name. PascalCase: MapPin, Mail, Globe, Calendar, Star, Heart, Check, X, ArrowRight, Phone, Building, Clock, Shield, Zap, Users, Eye, Download, Upload, Search, Filter, Settings, Bell, ChevronRight, ExternalLink, Info, AlertTriangle, CheckCircle, XCircle. Use in horizontal Stacks with Text for icon+label patterns. Never use emoji — always use Icon.",
